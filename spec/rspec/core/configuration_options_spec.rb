@@ -554,6 +554,27 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
       expect(config.exclusion_filter.rules).not_to have_key(:slow)
     end
 
+    it "does not raise when .rspec contains a malformed numeric-looking tag value" do
+      create_fixture_file("./.rspec", "--tag foo:3x146")
+      opts = config_options_object
+      config = RSpec::Core::Configuration.new
+      expect {
+        opts.configure(config)
+      }.not_to raise_error
+      expect(config.inclusion_filter.rules[:foo]).to eq('3x146')
+    end
+
+    it "does not raise when SPEC_OPTS contains a malformed numeric-looking tag value" do
+      with_env_vars 'SPEC_OPTS' => "--tag bar:1e3" do
+        opts = config_options_object
+        config = RSpec::Core::Configuration.new
+        expect {
+          opts.configure(config)
+        }.not_to raise_error
+        expect(config.inclusion_filter.rules[:bar]).to eq('1e3')
+      end
+    end
+
     it "prefers project file options over global file options" do
       create_fixture_file("./.rspec", "--format project")
       create_fixture_file("~/.rspec", "--format global")

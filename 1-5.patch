@@ -1,0 +1,163 @@
+diff --git a/lib/rspec/core/option_parser.rb b/lib/rspec/core/option_parser.rb
+index e239e87a..089b2056 100644
+--- a/lib/rspec/core/option_parser.rb
++++ b/lib/rspec/core/option_parser.rb
+@@ -252,19 +252,7 @@ FILTERING
+           name, value = tag.gsub(/^(~@|~|@)/, '').split(':', 2)
+           name = name.to_sym
+ 
+-          parsed_value = case value
+-                         when  nil        then true # The default value for tags is true
+-                         when 'true'      then true
+-                         when 'false'     then false
+-                         when 'nil'       then nil
+-                         when /^:/        then value[1..-1].to_sym
+-                         when /^\d+$/     then Integer(value)
+-                         when /^\d+.\d+$/ then Float(value)
+-                         else
+-                           value
+-                         end
+-
+-          add_tag_filter(options, filter_type, name, parsed_value)
++          add_tag_filter(options, filter_type, name, parse_tag_value(value))
+         end
+ 
+         parser.on('--default-path PATH', 'Set the default path where RSpec looks for examples (can',
+@@ -313,6 +301,20 @@ FILTERING
+       (options[filter_type] ||= {})[tag_name] = value
+     end
+ 
++    def parse_tag_value(value)
++      case value
++      when nil       then true
++      when 'true'    then true
++      when 'false'   then false
++      when 'nil'     then nil
++      when /^:/      then value[1..-1].to_sym
++      when /^\d+$/   then Integer(value)
++      when /^\d+\.\d+$/ then Float(value)
++      else
++        value
++      end
++    end
++
+     def set_fail_fast(options, value)
+       options[:fail_fast] = value
+     end
+diff --git a/spec/rspec/core/configuration_options_spec.rb b/spec/rspec/core/configuration_options_spec.rb
+index 4bf93974..f9603dd7 100644
+--- a/spec/rspec/core/configuration_options_spec.rb
++++ b/spec/rspec/core/configuration_options_spec.rb
+@@ -554,6 +554,27 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
+       expect(config.exclusion_filter.rules).not_to have_key(:slow)
+     end
+ 
++    it "does not raise when .rspec contains a malformed numeric-looking tag value" do
++      create_fixture_file("./.rspec", "--tag foo:3x146")
++      opts = config_options_object
++      config = RSpec::Core::Configuration.new
++      expect {
++        opts.configure(config)
++      }.not_to raise_error
++      expect(config.inclusion_filter.rules[:foo]).to eq('3x146')
++    end
++
++    it "does not raise when SPEC_OPTS contains a malformed numeric-looking tag value" do
++      with_env_vars 'SPEC_OPTS' => "--tag bar:1e3" do
++        opts = config_options_object
++        config = RSpec::Core::Configuration.new
++        expect {
++          opts.configure(config)
++        }.not_to raise_error
++        expect(config.inclusion_filter.rules[:bar]).to eq('1e3')
++      end
++    end
++
+     it "prefers project file options over global file options" do
+       create_fixture_file("./.rspec", "--format project")
+       create_fixture_file("~/.rspec", "--format global")
+diff --git a/spec/rspec/core/option_parser_spec.rb b/spec/rspec/core/option_parser_spec.rb
+index af3edf4e..20e1ba65 100644
+--- a/spec/rspec/core/option_parser_spec.rb
++++ b/spec/rspec/core/option_parser_spec.rb
+@@ -287,6 +287,41 @@ module RSpec::Core
+             options = Parser.parse([option, 'foo:3.146'])
+             expect(options[:inclusion_filter]).to eq(:foo => 3.146)
+           end
++
++          it "treats '0.0' as 0.0" do
++            options = Parser.parse([option, 'foo:0.0'])
++            expect(options[:inclusion_filter]).to eq(:foo => 0.0)
++          end
++
++          it "keeps '3x146' as a string" do
++            options = Parser.parse([option, 'foo:3x146'])
++            expect(options[:inclusion_filter]).to eq(:foo => '3x146')
++          end
++
++          it "keeps '3-146' as a string" do
++            options = Parser.parse([option, 'foo:3-146'])
++            expect(options[:inclusion_filter]).to eq(:foo => '3-146')
++          end
++
++          it "keeps '3.14.6' as a string" do
++            options = Parser.parse([option, 'foo:3.14.6'])
++            expect(options[:inclusion_filter]).to eq(:foo => '3.14.6')
++          end
++
++          it "keeps '1e3' as a string" do
++            options = Parser.parse([option, 'foo:1e3'])
++            expect(options[:inclusion_filter]).to eq(:foo => '1e3')
++          end
++
++          it "keeps '.5' as a string" do
++            options = Parser.parse([option, 'foo:.5'])
++            expect(options[:inclusion_filter]).to eq(:foo => '.5')
++          end
++
++          it "keeps '5.' as a string" do
++            options = Parser.parse([option, 'foo:5.'])
++            expect(options[:inclusion_filter]).to eq(:foo => '5.')
++          end
+         end
+ 
+         context "with ~" do
+@@ -309,6 +344,38 @@ module RSpec::Core
+             options = Parser.parse([option, '~foo:false'])
+             expect(options[:exclusion_filter]).to eq(:foo => false)
+           end
++
++          it "keeps '~foo:3x146' as a string in exclusion filter" do
++            options = Parser.parse([option, '~foo:3x146'])
++            expect(options[:exclusion_filter]).to eq(:foo => '3x146')
++          end
++
++          it "keeps '~foo:1e3' as a string in exclusion filter" do
++            options = Parser.parse([option, '~foo:1e3'])
++            expect(options[:exclusion_filter]).to eq(:foo => '1e3')
++          end
++
++          it "treats '~foo:42' as integer in exclusion filter" do
++            options = Parser.parse([option, '~foo:42'])
++            expect(options[:exclusion_filter]).to eq(:foo => 42)
++          end
++
++          it "treats '~foo:3.14' as float in exclusion filter" do
++            options = Parser.parse([option, '~foo:3.14'])
++            expect(options[:exclusion_filter]).to eq(:foo => 3.14)
++          end
++        end
++
++        context "multiple tag invocations" do
++          it "allows later same-name tag to override earlier" do
++            options = Parser.parse([option, 'foo:3x146', option, 'foo:hello'])
++            expect(options[:inclusion_filter]).to eq(:foo => 'hello')
++          end
++
++          it "allows later same-name tag to override earlier with different type" do
++            options = Parser.parse([option, 'foo:hello', option, 'foo:42'])
++            expect(options[:inclusion_filter]).to eq(:foo => 42)
++          end
+         end
+       end
+     end

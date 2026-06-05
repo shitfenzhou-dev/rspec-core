@@ -287,6 +287,41 @@ module RSpec::Core
             options = Parser.parse([option, 'foo:3.146'])
             expect(options[:inclusion_filter]).to eq(:foo => 3.146)
           end
+
+          it "treats '0.0' as 0.0" do
+            options = Parser.parse([option, 'foo:0.0'])
+            expect(options[:inclusion_filter]).to eq(:foo => 0.0)
+          end
+
+          it "keeps '3x146' as a string" do
+            options = Parser.parse([option, 'foo:3x146'])
+            expect(options[:inclusion_filter]).to eq(:foo => '3x146')
+          end
+
+          it "keeps '3-146' as a string" do
+            options = Parser.parse([option, 'foo:3-146'])
+            expect(options[:inclusion_filter]).to eq(:foo => '3-146')
+          end
+
+          it "keeps '3.14.6' as a string" do
+            options = Parser.parse([option, 'foo:3.14.6'])
+            expect(options[:inclusion_filter]).to eq(:foo => '3.14.6')
+          end
+
+          it "keeps '1e3' as a string" do
+            options = Parser.parse([option, 'foo:1e3'])
+            expect(options[:inclusion_filter]).to eq(:foo => '1e3')
+          end
+
+          it "keeps '.5' as a string" do
+            options = Parser.parse([option, 'foo:.5'])
+            expect(options[:inclusion_filter]).to eq(:foo => '.5')
+          end
+
+          it "keeps '5.' as a string" do
+            options = Parser.parse([option, 'foo:5.'])
+            expect(options[:inclusion_filter]).to eq(:foo => '5.')
+          end
         end
 
         context "with ~" do
@@ -308,6 +343,38 @@ module RSpec::Core
           it "treats 'false' as false" do
             options = Parser.parse([option, '~foo:false'])
             expect(options[:exclusion_filter]).to eq(:foo => false)
+          end
+
+          it "keeps '~foo:3x146' as a string in exclusion filter" do
+            options = Parser.parse([option, '~foo:3x146'])
+            expect(options[:exclusion_filter]).to eq(:foo => '3x146')
+          end
+
+          it "keeps '~foo:1e3' as a string in exclusion filter" do
+            options = Parser.parse([option, '~foo:1e3'])
+            expect(options[:exclusion_filter]).to eq(:foo => '1e3')
+          end
+
+          it "treats '~foo:42' as integer in exclusion filter" do
+            options = Parser.parse([option, '~foo:42'])
+            expect(options[:exclusion_filter]).to eq(:foo => 42)
+          end
+
+          it "treats '~foo:3.14' as float in exclusion filter" do
+            options = Parser.parse([option, '~foo:3.14'])
+            expect(options[:exclusion_filter]).to eq(:foo => 3.14)
+          end
+        end
+
+        context "multiple tag invocations" do
+          it "allows later same-name tag to override earlier" do
+            options = Parser.parse([option, 'foo:3x146', option, 'foo:hello'])
+            expect(options[:inclusion_filter]).to eq(:foo => 'hello')
+          end
+
+          it "allows later same-name tag to override earlier with different type" do
+            options = Parser.parse([option, 'foo:hello', option, 'foo:42'])
+            expect(options[:inclusion_filter]).to eq(:foo => 42)
           end
         end
       end
