@@ -287,6 +287,17 @@ module RSpec::Core
             options = Parser.parse([option, 'foo:3.146'])
             expect(options[:inclusion_filter]).to eq(:foo => 3.146)
           end
+
+          [
+            "3x146", "3-146", "3.14.6", "1e3", ".5", "5."
+          ].each do |malformed_value|
+            it "treats malformed numeric-looking #{malformed_value.inspect} as string" do
+              expect {
+                options = Parser.parse([option, "foo:#{malformed_value}"])
+                expect(options[:inclusion_filter]).to eq(:foo => malformed_value)
+              }.not_to raise_error
+            end
+          end
         end
 
         context "with ~" do
@@ -308,6 +319,13 @@ module RSpec::Core
           it "treats 'false' as false" do
             options = Parser.parse([option, '~foo:false'])
             expect(options[:exclusion_filter]).to eq(:foo => false)
+          end
+
+          it "treats malformed numeric-like value as string" do
+            expect {
+              options = Parser.parse([option, '~foo:3x146'])
+              expect(options[:exclusion_filter]).to eq(:foo => '3x146')
+            }.not_to raise_error
           end
         end
       end

@@ -1,0 +1,137 @@
+diff --git a/lib/rspec/core/option_parser.rb b/lib/rspec/core/option_parser.rb
+index e239e87a..6e117520 100644
+--- a/lib/rspec/core/option_parser.rb
++++ b/lib/rspec/core/option_parser.rb
+@@ -251,18 +251,7 @@ FILTERING
+ 
+           name, value = tag.gsub(/^(~@|~|@)/, '').split(':', 2)
+           name = name.to_sym
+-
+-          parsed_value = case value
+-                         when  nil        then true # The default value for tags is true
+-                         when 'true'      then true
+-                         when 'false'     then false
+-                         when 'nil'       then nil
+-                         when /^:/        then value[1..-1].to_sym
+-                         when /^\d+$/     then Integer(value)
+-                         when /^\d+.\d+$/ then Float(value)
+-                         else
+-                           value
+-                         end
++          parsed_value = parse_tag_value(value)
+ 
+           add_tag_filter(options, filter_type, name, parsed_value)
+         end
+@@ -321,5 +310,24 @@ FILTERING
+       options[:only_failures] = true
+       add_tag_filter(options, :inclusion_filter, :last_run_status, 'failed')
+     end
++
++    def parse_tag_value(value)
++      case value
++      when  nil        then true
++      when 'true'      then true
++      when 'false'     then false
++      when 'nil'       then nil
++      when /^:/        then value[1..-1].to_sym
++      when /^\d+$/     then Integer(value)
++      when /^\d+\.\d+$/
++        begin
++          Float(value)
++        rescue ArgumentError
++          value
++        end
++      else
++        value
++      end
++    end
+   end
+ end
+diff --git a/spec/rspec/core/configuration_options_spec.rb b/spec/rspec/core/configuration_options_spec.rb
+index 4bf93974..3888754c 100644
+--- a/spec/rspec/core/configuration_options_spec.rb
++++ b/spec/rspec/core/configuration_options_spec.rb
+@@ -144,6 +144,22 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
+       expect(config.exclusion_filter.rules).to have_key(:slow)
+     end
+ 
++    it "does not raise when tag value is malformed numeric-looking string" do
++      expect {
++        opts = config_options_object(*%w[--tag foo:3x146])
++        opts.configure(config)
++        expect(config.inclusion_filter.rules).to have_key(:foo)
++      }.not_to raise_error
++    end
++
++    it "does not raise when exclusion tag value is malformed numeric-looking string" do
++      expect {
++        opts = config_options_object(*%w[--tag ~foo:3-146])
++        opts.configure(config)
++        expect(config.exclusion_filter.rules).to have_key(:foo)
++      }.not_to raise_error
++    end
++
+     it "forces color" do
+       opts = config_options_object(*%w[--color])
+       expect(config).to receive(:force).with({:color => true})
+@@ -601,5 +617,24 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
+         expect(options[:full_description]).to eq([/The\ quick\ brown\ fox\ jumps\ over\ the\ lazy\ dog/])
+       end
+     end
++
++    context "with malformed numeric-looking tag values" do
++      it "does not raise when passed via SPEC_OPTS" do
++        with_env_vars 'SPEC_OPTS' => "--tag foo:3x146" do
++          expect {
++            options = parse_options()
++            expect(options[:inclusion_filter]).to include(:foo => '3x146')
++          }.not_to raise_error
++        end
++      end
++
++      it "does not raise when passed via .rspec file" do
++        create_fixture_file("./.rspec", "--tag bar:3-146")
++        expect {
++          options = parse_options()
++          expect(options[:inclusion_filter]).to include(:bar => '3-146')
++        }.not_to raise_error
++      end
++    end
+   end
+ end
+diff --git a/spec/rspec/core/option_parser_spec.rb b/spec/rspec/core/option_parser_spec.rb
+index af3edf4e..4b570a16 100644
+--- a/spec/rspec/core/option_parser_spec.rb
++++ b/spec/rspec/core/option_parser_spec.rb
+@@ -287,6 +287,17 @@ module RSpec::Core
+             options = Parser.parse([option, 'foo:3.146'])
+             expect(options[:inclusion_filter]).to eq(:foo => 3.146)
+           end
++
++          [
++            "3x146", "3-146", "3.14.6", "1e3", ".5", "5."
++          ].each do |malformed_value|
++            it "treats malformed numeric-looking #{malformed_value.inspect} as string" do
++              expect {
++                options = Parser.parse([option, "foo:#{malformed_value}"])
++                expect(options[:inclusion_filter]).to eq(:foo => malformed_value)
++              }.not_to raise_error
++            end
++          end
+         end
+ 
+         context "with ~" do
+@@ -309,6 +320,13 @@ module RSpec::Core
+             options = Parser.parse([option, '~foo:false'])
+             expect(options[:exclusion_filter]).to eq(:foo => false)
+           end
++
++          it "treats malformed numeric-like value as string" do
++            expect {
++              options = Parser.parse([option, '~foo:3x146'])
++              expect(options[:exclusion_filter]).to eq(:foo => '3x146')
++            }.not_to raise_error
++          end
+         end
+       end
+     end

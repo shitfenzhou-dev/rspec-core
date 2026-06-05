@@ -144,6 +144,22 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
       expect(config.exclusion_filter.rules).to have_key(:slow)
     end
 
+    it "does not raise when tag value is malformed numeric-looking string" do
+      expect {
+        opts = config_options_object(*%w[--tag foo:3x146])
+        opts.configure(config)
+        expect(config.inclusion_filter.rules).to have_key(:foo)
+      }.not_to raise_error
+    end
+
+    it "does not raise when exclusion tag value is malformed numeric-looking string" do
+      expect {
+        opts = config_options_object(*%w[--tag ~foo:3-146])
+        opts.configure(config)
+        expect(config.exclusion_filter.rules).to have_key(:foo)
+      }.not_to raise_error
+    end
+
     it "forces color" do
       opts = config_options_object(*%w[--color])
       expect(config).to receive(:force).with({:color => true})
@@ -599,6 +615,25 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
         create_fixture_file("./custom.opts", "-e 'The quick brown fox jumps over the lazy dog'")
         options = parse_options("-O", "./custom.opts")
         expect(options[:full_description]).to eq([/The\ quick\ brown\ fox\ jumps\ over\ the\ lazy\ dog/])
+      end
+    end
+
+    context "with malformed numeric-looking tag values" do
+      it "does not raise when passed via SPEC_OPTS" do
+        with_env_vars 'SPEC_OPTS' => "--tag foo:3x146" do
+          expect {
+            options = parse_options()
+            expect(options[:inclusion_filter]).to include(:foo => '3x146')
+          }.not_to raise_error
+        end
+      end
+
+      it "does not raise when passed via .rspec file" do
+        create_fixture_file("./.rspec", "--tag bar:3-146")
+        expect {
+          options = parse_options()
+          expect(options[:inclusion_filter]).to include(:bar => '3-146')
+        }.not_to raise_error
       end
     end
   end

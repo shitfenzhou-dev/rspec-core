@@ -251,18 +251,7 @@ FILTERING
 
           name, value = tag.gsub(/^(~@|~|@)/, '').split(':', 2)
           name = name.to_sym
-
-          parsed_value = case value
-                         when  nil        then true # The default value for tags is true
-                         when 'true'      then true
-                         when 'false'     then false
-                         when 'nil'       then nil
-                         when /^:/        then value[1..-1].to_sym
-                         when /^\d+$/     then Integer(value)
-                         when /^\d+.\d+$/ then Float(value)
-                         else
-                           value
-                         end
+          parsed_value = parse_tag_value(value)
 
           add_tag_filter(options, filter_type, name, parsed_value)
         end
@@ -320,6 +309,25 @@ FILTERING
     def configure_only_failures(options)
       options[:only_failures] = true
       add_tag_filter(options, :inclusion_filter, :last_run_status, 'failed')
+    end
+
+    def parse_tag_value(value)
+      case value
+      when  nil        then true
+      when 'true'      then true
+      when 'false'     then false
+      when 'nil'       then nil
+      when /^:/        then value[1..-1].to_sym
+      when /^\d+$/     then Integer(value)
+      when /^\d+\.\d+$/
+        begin
+          Float(value)
+        rescue ArgumentError
+          value
+        end
+      else
+        value
+      end
     end
   end
 end
