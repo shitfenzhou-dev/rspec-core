@@ -98,6 +98,54 @@ module RSpec
                 end
               end
 
+              context "with nested hash proc values" do
+                before do
+                  add_item item_4, { :db => { :enabled => flip_proc } }
+                end
+
+                it 'evaluates the nested proc each time since the logic can return a different value each time' do
+                  expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
+                  expect(repo.items_for(:db => { :enabled => nil })).to eq([])
+                  expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
+                  expect(repo.items_for(:db => { :enabled => nil })).to eq([])
+                end
+
+                it 'still performs memoization for metadata hashes that lack the nested-proc key' do
+                  call_counts = track_metadata_filter_apply_calls
+
+                  expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
+                  expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
+
+                  expect(call_counts[:slow => true]).to eq(1)
+                end
+              end
+
+              context "with deeply nested hash proc values" do
+                before do
+                  add_item item_4, { :db => { :pool => { :active => flip_proc } } }
+                end
+
+                it 'evaluates the deeply nested proc each time' do
+                  expect(repo.items_for(:db => { :pool => { :active => nil } })).to contain_exactly(item_4)
+                  expect(repo.items_for(:db => { :pool => { :active => nil } })).to eq([])
+                  expect(repo.items_for(:db => { :pool => { :active => nil } })).to contain_exactly(item_4)
+                  expect(repo.items_for(:db => { :pool => { :active => nil } })).to eq([])
+                end
+              end
+
+              context "with nested hash that has no proc" do
+                it 'memoizes lookups since there is no proc in the nested hash' do
+                  add_item item_4, { :db => { :adapter => "postgresql" } }
+
+                  call_counts = track_metadata_filter_apply_calls
+
+                  expect(repo.items_for(:db => { :adapter => "postgresql" })).to contain_exactly(item_4)
+                  expect(repo.items_for(:db => { :adapter => "postgresql" })).to contain_exactly(item_4)
+
+                  expect(call_counts[:db => { :adapter => "postgresql" }]).to eq(1)
+                end
+              end
+
               context "when initialized with the `:any?` predicate" do
                 let(:repo) { FilterableItemRepository::QueryOptimized.new(:any?) }
 
@@ -219,6 +267,77 @@ module RSpec
                 expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
 
                 expect(call_counts[:slow => true]).to eq(1)
+              end
+            end
+
+            context "when there are nested hash proc keys" do
+              before do
+                add_item item_4, { :db => { :enabled => flip_proc } }
+              end
+
+              it 'still performs memoization for metadata hashes that lack the nested-proc key' do
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
+                expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
+
+                expect(call_counts[:slow => true]).to eq(1)
+              end
+            end
+
+            context "after appending an item with a nested proc" do
+              it 'correctly identifies the new proc-sensitive key' do
+                add_item item_4, { :db => { :adapter => "postgresql" } }
+
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:db => { :adapter => "postgresql" })).to contain_exactly(item_4)
+                expect(repo.items_for(:db => { :adapter => "postgresql" })).to contain_exactly(item_4)
+
+                expect(call_counts[:db => { :adapter => "postgresql" }]).to eq(1)
+
+                add_item item_4, { :db => { :enabled => flip_proc } }
+
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
+                expect(repo.items_for(:db => { :enabled => nil })).to eq([])
+              end
+            end
+
+            context "after prepending an item with a nested proc" do
+              it 'correctly identifies the new proc-sensitive key' do
+                add_item item_4, { :db => { :adapter => "postgresql" } }
+
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:db => { :adapter => "postgresql" })).to contain_exactly(item_4)
+                expect(repo.items_for(:db => { :adapter => "postgresql" })).to contain_exactly(item_4)
+
+                expect(call_counts[:db => { :adapter => "postgresql" }]).to eq(1)
+
+                repo.prepend(item_4, { :db => { :enabled => flip_proc } })
+
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
+                expect(repo.items_for(:db => { :enabled => nil })).to eq([])
+              end
+            end
+
+            context "after deleting an item with a nested proc" do
+              it 'removes the proc-sensitive key if no other item has a proc for that key' do
+                add_item item_4, { :db => { :enabled => flip_proc } }
+
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
+                expect(repo.items_for(:db => { :enabled => nil })).to eq([])
+
+                repo.delete(item_4, { :db => { :enabled => flip_proc } })
+
+                add_item item_4, { :db => { :enabled => true } }
+
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:db => { :enabled => true })).to contain_exactly(item_4)
+                expect(repo.items_for(:db => { :enabled => true })).to contain_exactly(item_4)
+
+                expect(call_counts[:db => { :enabled => true }]).to eq(1)
               end
             end
 

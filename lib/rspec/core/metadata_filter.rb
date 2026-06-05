@@ -234,8 +234,14 @@ module RSpec
 
         def proc_keys_from(metadata)
           metadata.each_with_object([]) do |(key, value), to_return|
-            to_return << key if Proc === value
+            to_return << key if value_contains_proc?(value)
           end
+        end
+
+        def value_contains_proc?(value)
+          return true if Proc === value
+          return false unless Hash === value
+          value.any? { |_, v| value_contains_proc?(v) }
         end
 
         unless [].respond_to?(:each_with_object) # For 1.8.7
@@ -243,9 +249,16 @@ module RSpec
           undef proc_keys_from
           def proc_keys_from(metadata)
             metadata.inject([]) do |to_return, (key, value)|
-              to_return << key if Proc === value
+              to_return << key if value_contains_proc?(value)
               to_return
             end
+          end
+
+          undef value_contains_proc?
+          def value_contains_proc?(value)
+            return true if Proc === value
+            return false unless Hash === value
+            value.any? { |_, v| value_contains_proc?(v) }
           end
           # :nocov:
         end
