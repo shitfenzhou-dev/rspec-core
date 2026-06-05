@@ -53,6 +53,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
           :line_number => succeeding_line,
           :run_time => formatter.output_hash[:examples][0][:run_time],
           :pending_message => nil,
+          :rerun_argument => its[0].location_rerun_argument,
         },
         {
           :id => its[1].id,
@@ -63,6 +64,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
           :line_number => failing_line,
           :run_time => formatter.output_hash[:examples][1][:run_time],
           :pending_message => nil,
+          :rerun_argument => its[1].location_rerun_argument,
           :exception => {
             :class     => "RuntimeError",
             :message   => "eek",
@@ -78,6 +80,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
           :line_number => pending_line,
           :run_time => formatter.output_hash[:examples][2][:run_time],
           :pending_message => "world peace",
+          :rerun_argument => its[2].location_rerun_argument,
         },
       ],
       :summary => {
@@ -91,6 +94,47 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
     }
     expect(formatter.output_hash).to eq expected
     expect(formatter_output.string).to eq expected.to_json
+  end
+
+  describe "rerun_argument behavior" do
+    let(:group) do
+      RSpec.describe("group") do
+        # dynamically defined examples that will share the same line number/location
+        %w[a b].each do |name|
+          it(name) { expect(1).to eq 1 }
+        end
+        it("pending fixed") { pending; expect(1).to eq 1 }
+      end
+    end
+
+    before do
+      # To mock RSpec.world.all_examples behavior for duplicates
+      allow(RSpec.world).to receive(:all_examples).and_return(group.examples)
+    end
+
+    it "falls back to example id when multiple examples have the same location" do
+      reporter.report(3) { |r| group.run(r) }
+      examples = formatter.output_hash[:examples]
+      expect(examples[0][:rerun_argument]).to eq group.examples[0].id
+      expect(examples[1][:rerun_argument]).to eq group.examples[1].id
+    end
+
+    it "uses location_rerun_argument when force_line_number_for_spec_rerun is true despite duplicates" do
+      RSpec.configuration.force_line_number_for_spec_rerun = true
+      reporter.report(3) { |r| group.run(r) }
+      examples = formatter.output_hash[:examples]
+      expect(examples[0][:rerun_argument]).to eq group.examples[0].location_rerun_argument
+      expect(examples[1][:rerun_argument]).to eq group.examples[1].location_rerun_argument
+      RSpec.configuration.force_line_number_for_spec_rerun = false
+    end
+    
+    it "includes rerun_argument for pending fixed examples" do
+      reporter.report(3) { |r| group.run(r) }
+      examples = formatter.output_hash[:examples]
+      pending_fixed = examples[2]
+      expect(pending_fixed[:status]).to eq "failed" # pending fixed becomes failed
+      expect(pending_fixed[:rerun_argument]).to eq group.examples[2].location_rerun_argument
+    end
   end
 
   context "when full backtrace is enabled" do
@@ -265,6 +309,12 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
 
       it "ranks the example groups by average time" do |ex|
         expect(formatter.output_hash[:profile][:groups].first[:description]).to eq("slow group")
+      end
+
+      it "includes rerun_argument in profile examples without failing if stop was not called" do
+        examples = formatter.output_hash[:profile][:examples]
+        expect(examples).not_to be_empty
+        expect(examples.first).to have_key(:rerun_argument)
       end
     end
   end

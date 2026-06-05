@@ -1,0 +1,147 @@
+diff --git a/lib/rspec/core/formatters/json_formatter.rb b/lib/rspec/core/formatters/json_formatter.rb
+index 7c6fde82..e8d14f90 100644
+--- a/lib/rspec/core/formatters/json_formatter.rb
++++ b/lib/rspec/core/formatters/json_formatter.rb
+@@ -33,6 +33,7 @@ module RSpec
+         end
+ 
+         def stop(group_notification)
++          @all_examples ||= group_notification.notifications.map(&:example)
+           @output_hash[:examples] = group_notification.notifications.map do |notification|
+             format_example(notification.example).tap do |hash|
+               e = notification.example.exception
+@@ -58,6 +59,7 @@ module RSpec
+         end
+ 
+         def dump_profile(profile)
++          @all_examples ||= profile.examples
+           @output_hash[:profile] = {}
+           dump_profile_slowest_examples(profile)
+           dump_profile_slowest_example_groups(profile)
+@@ -95,8 +97,37 @@ module RSpec
+             :line_number  => example.metadata[:line_number],
+             :run_time => example.execution_result.run_time,
+             :pending_message => example.execution_result.pending_message,
++            :rerun_argument => rerun_argument_for(example),
+           }
+         end
++
++        def rerun_argument_for(example)
++          location = example.location_rerun_argument
++
++          return location unless duplicate_rerun_locations.include?(location)
++          return location if RSpec.configuration.force_line_number_for_spec_rerun
++          example.id
++        end
++
++        def duplicate_rerun_locations
++          @duplicate_rerun_locations ||= begin
++            locations = current_run_examples.map(&:location_rerun_argument)
++            
++            duplicates = []
++            locations.group_by { |l| l }.each do |l, ls|
++              duplicates << l if ls.count > 1
++            end
++            duplicates
++          end
++        end
++
++        def current_run_examples
++          if RSpec.world.all_examples.any?
++            RSpec.world.all_examples
++          else
++            @all_examples || []
++          end
++        end
+       end
+     end
+   end
+diff --git a/spec/rspec/core/formatters/json_formatter_spec.rb b/spec/rspec/core/formatters/json_formatter_spec.rb
+index 2f54d6c7..248ab792 100644
+--- a/spec/rspec/core/formatters/json_formatter_spec.rb
++++ b/spec/rspec/core/formatters/json_formatter_spec.rb
+@@ -53,6 +53,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :line_number => succeeding_line,
+           :run_time => formatter.output_hash[:examples][0][:run_time],
+           :pending_message => nil,
++          :rerun_argument => its[0].location_rerun_argument,
+         },
+         {
+           :id => its[1].id,
+@@ -63,6 +64,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :line_number => failing_line,
+           :run_time => formatter.output_hash[:examples][1][:run_time],
+           :pending_message => nil,
++          :rerun_argument => its[1].location_rerun_argument,
+           :exception => {
+             :class     => "RuntimeError",
+             :message   => "eek",
+@@ -78,6 +80,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :line_number => pending_line,
+           :run_time => formatter.output_hash[:examples][2][:run_time],
+           :pending_message => "world peace",
++          :rerun_argument => its[2].location_rerun_argument,
+         },
+       ],
+       :summary => {
+@@ -93,6 +96,47 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+     expect(formatter_output.string).to eq expected.to_json
+   end
+ 
++  describe "rerun_argument behavior" do
++    let(:group) do
++      RSpec.describe("group") do
++        # dynamically defined examples that will share the same line number/location
++        %w[a b].each do |name|
++          it(name) { expect(1).to eq 1 }
++        end
++        it("pending fixed") { pending; expect(1).to eq 1 }
++      end
++    end
++
++    before do
++      # To mock RSpec.world.all_examples behavior for duplicates
++      allow(RSpec.world).to receive(:all_examples).and_return(group.examples)
++    end
++
++    it "falls back to example id when multiple examples have the same location" do
++      reporter.report(3) { |r| group.run(r) }
++      examples = formatter.output_hash[:examples]
++      expect(examples[0][:rerun_argument]).to eq group.examples[0].id
++      expect(examples[1][:rerun_argument]).to eq group.examples[1].id
++    end
++
++    it "uses location_rerun_argument when force_line_number_for_spec_rerun is true despite duplicates" do
++      RSpec.configuration.force_line_number_for_spec_rerun = true
++      reporter.report(3) { |r| group.run(r) }
++      examples = formatter.output_hash[:examples]
++      expect(examples[0][:rerun_argument]).to eq group.examples[0].location_rerun_argument
++      expect(examples[1][:rerun_argument]).to eq group.examples[1].location_rerun_argument
++      RSpec.configuration.force_line_number_for_spec_rerun = false
++    end
++    
++    it "includes rerun_argument for pending fixed examples" do
++      reporter.report(3) { |r| group.run(r) }
++      examples = formatter.output_hash[:examples]
++      pending_fixed = examples[2]
++      expect(pending_fixed[:status]).to eq "failed" # pending fixed becomes failed
++      expect(pending_fixed[:rerun_argument]).to eq group.examples[2].location_rerun_argument
++    end
++  end
++
+   context "when full backtrace is enabled" do
+     around do |example|
+       original_value = RSpec.configuration.full_backtrace?
+@@ -266,6 +310,12 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+       it "ranks the example groups by average time" do |ex|
+         expect(formatter.output_hash[:profile][:groups].first[:description]).to eq("slow group")
+       end
++
++      it "includes rerun_argument in profile examples without failing if stop was not called" do
++        examples = formatter.output_hash[:profile][:examples]
++        expect(examples).not_to be_empty
++        expect(examples.first).to have_key(:rerun_argument)
++      end
+     end
+   end
+ end
