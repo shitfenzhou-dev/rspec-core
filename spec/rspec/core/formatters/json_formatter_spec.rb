@@ -13,6 +13,12 @@ require 'rspec/core/reporter'
 RSpec.describe RSpec::Core::Formatters::JsonFormatter do
   include FormatterSupport
 
+  def run_group(group)
+    reporter.report(group.examples.count) do |r|
+      group.run(r)
+    end
+  end
+
   it "can be loaded via `--format json`" do
     output = run_example_specs_with_formatter("json", :normalize_output => false, :seed => 42)
     parsed = JSON.parse(output)
@@ -51,6 +57,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
           :status => "passed",
           :file_path => this_file,
           :line_number => succeeding_line,
+          :rerun_argument => its[0].location_rerun_argument,
           :run_time => formatter.output_hash[:examples][0][:run_time],
           :pending_message => nil,
         },
@@ -61,6 +68,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
           :status => "failed",
           :file_path => this_file,
           :line_number => failing_line,
+          :rerun_argument => its[1].location_rerun_argument,
           :run_time => formatter.output_hash[:examples][1][:run_time],
           :pending_message => nil,
           :exception => {
@@ -76,6 +84,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
           :status => "pending",
           :file_path => this_file,
           :line_number => pending_line,
+          :rerun_argument => its[2].location_rerun_argument,
           :run_time => formatter.output_hash[:examples][2][:run_time],
           :pending_message => "world peace",
         },
@@ -149,6 +158,68 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
     end
   end
 
+  describe "rerun arguments" do
+    it "uses the location rerun argument when the location is unique" do
+      examples = []
+      group = RSpec.describe("unique rerun arguments") do
+        examples << example("first") { }
+        examples << example("second") { }
+      end
+
+      run_group(group)
+
+      expect(formatter.output_hash[:examples].map { |hash| hash[:rerun_argument] }).to eq(
+        examples.map(&:location_rerun_argument)
+      )
+    end
+
+    it "uses the example id when multiple examples share the same rerun location" do
+      examples = []
+      group = RSpec.describe("duplicate rerun arguments") do
+        examples << example("first") { }; examples << example("second") { }
+      end
+
+      run_group(group)
+
+      expect(formatter.output_hash[:examples].map { |hash| hash[:rerun_argument] }).to eq(
+        examples.map(&:id)
+      )
+    end
+
+    it "keeps the location rerun argument when forced to use line numbers" do
+      examples = []
+      group = RSpec.describe("forced line numbers") do
+        examples << example("first") { }; examples << example("second") { }
+      end
+
+      allow(RSpec.configuration).to receive(:force_line_number_for_spec_rerun).and_return(true)
+
+      run_group(group)
+
+      expect(formatter.output_hash[:examples].map { |hash| hash[:rerun_argument] }).to eq(
+        examples.map(&:location_rerun_argument)
+      )
+    end
+
+    it "includes the rerun argument for passed, failed, pending, and pending fixed examples" do
+      group = RSpec.describe("example statuses") do
+        example("passes") { expect(1).to eq(1) }
+        example("fails") { raise "boom" }
+        example("pending") { pending "not yet"; raise "boom" }
+        example("pending fixed") { pending "not yet" }
+      end
+
+      run_group(group)
+
+      output_by_description = formatter.output_hash[:examples].each_with_object({}) do |example_hash, hash|
+        hash[example_hash[:description]] = example_hash
+      end
+
+      expect(output_by_description.keys).to include("passes", "fails", "pending", "pending fixed")
+      expect(output_by_description.values).to all(include(:rerun_argument))
+    end
+  end
+
   describe "#seed" do
     context "use random seed" do
       it "adds random seed" do
@@ -201,10 +272,10 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
 
   describe "#dump_profile", :slow do
 
-    def profile *groups
+    def profile(*groups, number: 10)
       groups.each { |group| group.run(reporter) }
-      examples = groups.map(&:examples).flatten
-      send_notification :dump_profile, profile_notification(0.5, examples, 10)
+      examples = groups.flat_map(&:examples)
+      send_notification :dump_profile, profile_notification(0.5, examples, number)
     end
 
     before do
@@ -233,6 +304,38 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
 
       it "has the summary of profile information" do
         expect(formatter.output_hash[:profile].keys).to match_array([:examples, :groups, :slowest, :total])
+      end
+    end
+
+    context "with duplicate rerun locations", :slow do
+      it "uses the same rerun argument rules for slowest examples" do
+        examples = []
+        group = RSpec.describe("profile rerun arguments") do
+          examples << example("slow duplicate") { sleep 0.003 }; examples << example("fast duplicate") { }
+          example("other") { sleep 0.001 }
+        end
+
+        profile(group, number: 1)
+
+        profile_example = formatter.output_hash[:profile][:examples].first
+        expect(profile_example[:description]).to eq("slow duplicate")
+        expect(profile_example[:rerun_argument]).to eq(examples.first.id)
+      end
+
+      it "falls back to the profile notification examples when dump_profile is sent before stop" do
+        examples = []
+        group = RSpec.describe("profile rerun fallback") do
+          examples << example("slow duplicate") { sleep 0.003 }; examples << example("fast duplicate") { }
+          example("other") { sleep 0.001 }
+        end
+
+        expect {
+          profile(group, number: 1)
+        }.not_to raise_error
+
+        profile_example = formatter.output_hash[:profile][:examples].first
+        expect(profile_example[:description]).to eq("slow duplicate")
+        expect(profile_example[:rerun_argument]).to eq(examples.first.id)
       end
     end
 
