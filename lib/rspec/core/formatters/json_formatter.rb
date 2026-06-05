@@ -95,7 +95,28 @@ module RSpec
             :line_number  => example.metadata[:line_number],
             :run_time => example.execution_result.run_time,
             :pending_message => example.execution_result.pending_message,
+            :rerun_argument => rerun_argument_for(example),
           }
+        end
+
+        def rerun_argument_for(example)
+          location = example.location_rerun_argument
+
+          return location unless duplicate_rerun_locations.key?(location)
+          return location if RSpec.configuration.force_line_number_for_spec_rerun
+          example.id
+        end
+
+        def duplicate_rerun_locations
+          @duplicate_rerun_locations ||= begin
+            locations = ::RSpec.world.all_examples.map(&:location_rerun_argument)
+
+            duplicates = {}
+            locations.group_by { |l| l }.each do |l, ls|
+              duplicates[l] = true if ls.count > 1
+            end
+            duplicates
+          end
         end
       end
     end
