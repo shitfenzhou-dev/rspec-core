@@ -255,6 +255,106 @@ module RSpec::Core
       )
     end
 
+    context "when this run has a definitive status and previous run has extra attributes" do
+      it "uses the this-run hash so previous extra attributes are dropped" do
+        this_run = [
+          example("foo_spec.rb", "1:1", "passed", :run_time => "2 seconds")
+        ]
+        from_previous_runs = [
+          example("foo_spec.rb", "1:1", "failed", :run_time => "5 seconds", :custom => "data")
+        ]
+
+        merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
+        expect(merged).to contain_exactly(
+          a_hash_including(
+            :example_id => "foo_spec.rb[1:1]",
+            :status     => "passed",
+            :run_time   => "2 seconds"
+          )
+        )
+        expect(merged.first).not_to have_key(:custom)
+      end
+    end
+
+    context "when this run has UNKNOWN_STATUS and previous run has extra attributes" do
+      it "uses the previous-run hash so its extra attributes are preserved" do
+        this_run = [
+          example("foo_spec.rb", "1:1", Configuration::UNKNOWN_STATUS)
+        ]
+        from_previous_runs = [
+          example("foo_spec.rb", "1:1", "failed", :run_time => "5 seconds", :custom => "data")
+        ]
+
+        merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
+        expect(merged).to contain_exactly(
+          a_hash_including(
+            :example_id => "foo_spec.rb[1:1]",
+            :status     => "failed",
+            :run_time   => "5 seconds",
+            :custom     => "data"
+          )
+        )
+      end
+    end
+
+    context "immutability of inputs" do
+      it "does not modify the this_run array" do
+        this_run = [example(existing_spec_file, "1:1", "passed")]
+        original = this_run.dup
+        merge(:this_run => this_run, :from_previous_runs => [])
+        expect(this_run).to eq(original)
+      end
+
+      it "does not modify the from_previous_runs array" do
+        from_previous_runs = [example(existing_spec_file, "1:1", "failed")]
+        original = from_previous_runs.dup
+        merge(:this_run => [], :from_previous_runs => from_previous_runs)
+        expect(from_previous_runs).to eq(original)
+      end
+
+      it "does not modify individual example hashes in this_run" do
+        ex = example(existing_spec_file, "1:1", "passed")
+        original_status = ex[:status]
+        merge(:this_run => [ex], :from_previous_runs => [example(existing_spec_file, "1:1", "failed")])
+        expect(ex[:status]).to eq(original_status)
+      end
+
+      it "does not modify individual example hashes in from_previous_runs" do
+        ex = example(existing_spec_file, "1:1", "failed")
+        original_status = ex[:status]
+        merge(:this_run => [example(existing_spec_file, "1:1", "passed")], :from_previous_runs => [ex])
+        expect(ex[:status]).to eq(original_status)
+      end
+    end
+
+    context "comprehensive merge scenario" do
+      it "handles a mix of all merge decisions in one call" do
+        this_run = [
+          example(existing_spec_file, "1:1", "passed", :run_time => "1 second"),
+          example(existing_spec_file, "1:3", Configuration::UNKNOWN_STATUS),
+          example(existing_spec_file, "2:1", "failed", :run_time => "3 seconds"),
+          example("new_spec.rb", "1:1", "passed")
+        ]
+
+        from_previous_runs = [
+          example(existing_spec_file, "1:1", "failed", :run_time => "2 seconds"),
+          example(existing_spec_file, "1:2", "failed"),
+          example(existing_spec_file, "1:3", "passed", :run_time => "1 second"),
+          example(existing_spec_file, "2:1", "passed"),
+          example("deleted_spec.rb", "1:1", "failed")
+        ]
+
+        merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
+
+        expect(merged).to eq([
+          example(existing_spec_file, "1:1", "passed", :run_time => "1 second"),
+          example(existing_spec_file, "1:3", "passed", :run_time => "1 second"),
+          example(existing_spec_file, "2:1", "failed", :run_time => "3 seconds"),
+          example("new_spec.rb", "1:1", "passed")
+        ])
+      end
+    end
+
     def example(file, scoped_id, status, extras = {})
       { :example_id => "#{file}[#{scoped_id}]", :status => status }.merge(extras)
     end
