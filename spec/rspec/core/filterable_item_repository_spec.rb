@@ -98,6 +98,19 @@ module RSpec
                 end
               end
 
+              context "with proc values in nested hash" do
+                before do
+                  add_item item_4, { :nested => { :include_it => flip_proc } }
+                end
+
+                it 'evaluates the proc each time since the logic can return a different value each time' do
+                  expect(repo.items_for(:nested => { :include_it => nil })).to contain_exactly(item_4)
+                  expect(repo.items_for(:nested => { :include_it => nil })).to eq([])
+                  expect(repo.items_for(:nested => { :include_it => nil })).to contain_exactly(item_4)
+                  expect(repo.items_for(:nested => { :include_it => nil })).to eq([])
+                end
+              end
+
               context "when initialized with the `:any?` predicate" do
                 let(:repo) { FilterableItemRepository::QueryOptimized.new(:any?) }
 
@@ -219,6 +232,53 @@ module RSpec
                 expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
 
                 expect(call_counts[:slow => true]).to eq(1)
+              end
+            end
+
+            context "when there are some nested proc keys" do
+              before do
+                add_item item_4, { :nested => { :include_it => flip_proc } }
+              end
+
+              it 'still performs memoization for metadata hashes that lack those keys' do
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
+                expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
+
+                expect(call_counts[:slow => true]).to eq(1)
+              end
+            end
+
+            context "when there are nested hash keys without procs" do
+              before do
+                add_item item_4, { :nested => { :include_it => true } }
+              end
+
+              it 'performs memoization for metadata hashes' do
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:nested => { :include_it => true })).to contain_exactly(item_4)
+                expect(repo.items_for(:nested => { :include_it => true })).to contain_exactly(item_4)
+
+                expect(call_counts[:nested => { :include_it => true }]).to eq(1)
+              end
+            end
+
+            describe "reconstructing proc keys" do
+              it "memoizes properly after deleting a nested proc key" do
+                add_item item_4, { :nested => { :include_it => flip_proc } }
+                expect(repo.items_for(:nested => { :include_it => nil })).to contain_exactly(item_4)
+                
+                repo.delete(item_4, { :nested => { :include_it => flip_proc } })
+                
+                add_item item_4, { :nested => { :include_it => true } }
+                
+                call_counts = track_metadata_filter_apply_calls
+                expect(repo.items_for(:nested => { :include_it => true })).to contain_exactly(item_4)
+                expect(repo.items_for(:nested => { :include_it => true })).to contain_exactly(item_4)
+                
+                expect(call_counts[:nested => { :include_it => true }]).to eq(1)
               end
             end
 

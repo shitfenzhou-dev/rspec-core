@@ -234,7 +234,17 @@ module RSpec
 
         def proc_keys_from(metadata)
           metadata.each_with_object([]) do |(key, value), to_return|
-            to_return << key if Proc === value
+            to_return << key if has_proc?(value)
+          end
+        end
+
+        def has_proc?(value)
+          if Proc === value
+            true
+          elsif Hash === value
+            value.values.any? { |v| has_proc?(v) }
+          else
+            false
           end
         end
 
@@ -243,7 +253,7 @@ module RSpec
           undef proc_keys_from
           def proc_keys_from(metadata)
             metadata.inject([]) do |to_return, (key, value)|
-              to_return << key if Proc === value
+              to_return << key if has_proc?(value)
               to_return
             end
           end
