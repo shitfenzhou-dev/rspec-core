@@ -83,42 +83,41 @@ module RSpec
       end
 
       def merge
-        delete_previous_examples_that_no_longer_exist
-
-        @this_run.merge(@from_previous_runs) do |_ex_id, new, old|
-          new.fetch(:status) == Configuration::UNKNOWN_STATUS ? old : new
-        end.values.sort_by(&method(:sort_value_from))
+        all_ids = @this_run.keys | @from_previous_runs.keys
+        all_ids.map { |id| status_for(id) }.compact.sort_by(&method(:sort_value_from))
       end
 
     private
+
+      def status_for(ex_id)
+        new_record = @this_run[ex_id]
+        old_record = @from_previous_runs[ex_id]
+
+        if new_record && old_record
+          new_record.fetch(:status) == Configuration::UNKNOWN_STATUS ? old_record : new_record
+        elsif new_record
+          new_record
+        else
+          # The example is only in the previous runs.
+          spec_file = spec_file_from(ex_id)
+          if loaded_spec_files.include?(spec_file)
+            # The file was loaded, but this example is missing, meaning it was deleted.
+            nil
+          elsif @file_exists_cache[spec_file]
+            # The file was not loaded, but it still exists. Keep the old status.
+            old_record
+          else
+            # The file was deleted.
+            nil
+          end
+        end
+      end
 
       def hash_from(example_list)
         example_list.inject({}) do |hash, example|
           hash[example.fetch(:example_id)] = example
           hash
         end
-      end
-
-      def delete_previous_examples_that_no_longer_exist
-        @from_previous_runs.delete_if do |ex_id, _|
-          example_must_no_longer_exist?(ex_id)
-        end
-      end
-
-      def example_must_no_longer_exist?(ex_id)
-        # Obviously, it exists if it was loaded for this spec run...
-        return false if @this_run.key?(ex_id)
-
-        spec_file = spec_file_from(ex_id)
-
-        # `this_run` includes examples that were loaded but not executed.
-        # Given that, if the spec file for this example was loaded,
-        # but the id does not still exist, it's safe to assume that
-        # the example must no longer exist.
-        return true if loaded_spec_files.include?(spec_file)
-
-        # The example may still exist as long as the file exists...
-        !@file_exists_cache[spec_file]
       end
 
       def loaded_spec_files

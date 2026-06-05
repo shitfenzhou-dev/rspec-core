@@ -255,6 +255,19 @@ module RSpec::Core
       )
     end
 
+    it "does not mutate the provided arrays or their hashes" do
+      this_run = [ example(existing_spec_file, "1:1", "passed", :run_time => 1) ]
+      from_previous_runs = [ example(existing_spec_file, "1:1", "failed", :run_time => 2) ]
+
+      this_run_dup = this_run.map(&:dup)
+      from_previous_runs_dup = from_previous_runs.map(&:dup)
+
+      merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
+
+      expect(this_run).to eq(this_run_dup)
+      expect(from_previous_runs).to eq(from_previous_runs_dup)
+    end
+
     def example(file, scoped_id, status, extras = {})
       { :example_id => "#{file}[#{scoped_id}]", :status => status }.merge(extras)
     end
