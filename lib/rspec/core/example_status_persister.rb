@@ -77,52 +77,62 @@ module RSpec
       end
 
       def initialize(this_run, from_previous_runs)
-        @this_run           = hash_from(this_run)
-        @from_previous_runs = hash_from(from_previous_runs)
-        @file_exists_cache  = Hash.new { |hash, file| hash[file] = File.exist?(file) }
+        @this_run_hash           = hash_from(this_run)
+        @from_previous_runs_hash = hash_from(from_previous_runs)
+        @file_exists_cache       = Hash.new { |hash, file| hash[file] = File.exist?(file) }
+        @loaded_spec_files       = Set.new(@this_run_hash.keys.map(&method(:spec_file_from)))
       end
 
       def merge
-        delete_previous_examples_that_no_longer_exist
+        merged = {}
 
-        @this_run.merge(@from_previous_runs) do |_ex_id, new, old|
-          new.fetch(:status) == Configuration::UNKNOWN_STATUS ? old : new
-        end.values.sort_by(&method(:sort_value_from))
+        # Step 1: Add all examples from this run
+        @this_run_hash.each do |ex_id, example|
+          merged[ex_id] = example
+        end
+
+        # Step 2: Process examples from previous runs
+        @from_previous_runs_hash.each do |ex_id, previous_example|
+          # Decision 1: Should we keep this historical example?
+          next unless should_keep_historical_example?(ex_id)
+
+          # Decision 2: Do we already have a status from this run?
+          if merged.key?(ex_id)
+            # Only use previous status if this run's status is unknown
+            if merged[ex_id].fetch(:status) == Configuration::UNKNOWN_STATUS
+              merged[ex_id] = previous_example
+            end
+          else
+            # No status from this run, use the previous one
+            merged[ex_id] = previous_example
+          end
+        end
+
+        # Step 3: Sort the results
+        merged.values.sort_by(&method(:sort_value_from))
       end
 
     private
 
       def hash_from(example_list)
         example_list.inject({}) do |hash, example|
-          hash[example.fetch(:example_id)] = example
+          hash[example.fetch(:example_id)] = example.dup
           hash
         end
       end
 
-      def delete_previous_examples_that_no_longer_exist
-        @from_previous_runs.delete_if do |ex_id, _|
-          example_must_no_longer_exist?(ex_id)
-        end
-      end
-
-      def example_must_no_longer_exist?(ex_id)
-        # Obviously, it exists if it was loaded for this spec run...
-        return false if @this_run.key?(ex_id)
+      def should_keep_historical_example?(ex_id)
+        # If the example was in this run, we've already handled it
+        return false if @this_run_hash.key?(ex_id)
 
         spec_file = spec_file_from(ex_id)
 
-        # `this_run` includes examples that were loaded but not executed.
-        # Given that, if the spec file for this example was loaded,
-        # but the id does not still exist, it's safe to assume that
-        # the example must no longer exist.
-        return true if loaded_spec_files.include?(spec_file)
+        # If the spec file was loaded but the example isn't in this run,
+        # it must have been deleted
+        return false if @loaded_spec_files.include?(spec_file)
 
-        # The example may still exist as long as the file exists...
-        !@file_exists_cache[spec_file]
-      end
-
-      def loaded_spec_files
-        @loaded_spec_files ||= Set.new(@this_run.keys.map(&method(:spec_file_from)))
+        # Only keep it if the file still exists
+        @file_exists_cache[spec_file]
       end
 
       def spec_file_from(ex_id)
