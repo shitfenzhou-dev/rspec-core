@@ -554,6 +554,14 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
       expect(config.exclusion_filter.rules).not_to have_key(:slow)
     end
 
+    it "prefers CLI exclude-pattern over file options, without cross-source merging" do
+      create_fixture_file("./.rspec", "--exclude-pattern a/**/*_spec.rb")
+      opts = config_options_object("--exclude-pattern", "b/**/*_spec.rb")
+      config = RSpec::Core::Configuration.new
+      opts.configure(config)
+      expect(config.exclude_pattern).to eq("b/**/*_spec.rb")
+    end
+
     it "prefers project file options over global file options" do
       create_fixture_file("./.rspec", "--format project")
       create_fixture_file("~/.rspec", "--format global")
