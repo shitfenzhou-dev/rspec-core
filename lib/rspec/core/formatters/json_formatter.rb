@@ -1,5 +1,6 @@
 RSpec::Support.require_rspec_core "formatters/base_formatter"
 require 'json'
+require 'set'
 
 module RSpec
   module Core
@@ -15,6 +16,8 @@ module RSpec
           @output_hash = {
             :version => RSpec::Core::Version::STRING
           }
+          @all_examples = nil
+          @duplicate_rerun_locations = nil
         end
 
         def message(notification)
@@ -33,6 +36,8 @@ module RSpec
         end
 
         def stop(group_notification)
+          @all_examples = group_notification.examples
+          @duplicate_rerun_locations = calculate_duplicate_rerun_locations(@all_examples)
           @output_hash[:examples] = group_notification.notifications.map do |notification|
             format_example(notification.example).tap do |hash|
               e = notification.example.exception
@@ -85,7 +90,33 @@ module RSpec
 
       private
 
-        def format_example(example)
+        def calculate_duplicate_rerun_locations(examples)
+          return Set.new unless examples
+          locations = examples.map(&:location_rerun_argument)
+
+          Set.new.tap do |s|
+            locations.group_by { |l| l }.each do |l, ls|
+              s << l if ls.count > 1
+            end
+          end
+        end
+
+        def rerun_argument_for(example, examples_for_duplicate_check)
+          location = example.location_rerun_argument
+          duplicate_locations = if @duplicate_rerun_locations
+                                  @duplicate_rerun_locations
+                                elsif examples_for_duplicate_check
+                                  calculate_duplicate_rerun_locations(examples_for_duplicate_check)
+                                else
+                                  Set.new
+                                end
+
+          return location unless duplicate_locations.include?(location)
+          return location if RSpec.configuration.force_line_number_for_spec_rerun
+          example.id
+        end
+
+        def format_example(example, examples_for_duplicate_check = @all_examples)
           {
             :id => example.id,
             :description => example.description,
@@ -95,7 +126,23 @@ module RSpec
             :line_number  => example.metadata[:line_number],
             :run_time => example.execution_result.run_time,
             :pending_message => example.execution_result.pending_message,
+            :rerun_argument => rerun_argument_for(example, examples_for_duplicate_check),
           }
+        end
+
+        def dump_profile_slowest_examples(profile)
+          @output_hash[:profile] = {}
+          # 确保我们有 duplicate 信息，如果没有则使用 profile 中的 examples
+          if @duplicate_rerun_locations.nil?
+            @duplicate_rerun_locations = calculate_duplicate_rerun_locations(profile.examples)
+          end
+          @output_hash[:profile][:examples] = profile.slowest_examples.map do |example|
+            format_example(example, profile.examples).tap do |hash|
+              hash[:run_time] = example.execution_result.run_time
+            end
+          end
+          @output_hash[:profile][:slowest] = profile.slow_duration
+          @output_hash[:profile][:total] = profile.duration
         end
       end
     end

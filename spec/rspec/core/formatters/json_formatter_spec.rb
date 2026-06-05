@@ -53,6 +53,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
           :line_number => succeeding_line,
           :run_time => formatter.output_hash[:examples][0][:run_time],
           :pending_message => nil,
+          :rerun_argument => formatter.output_hash[:examples][0][:rerun_argument],
         },
         {
           :id => its[1].id,
@@ -68,6 +69,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
             :message   => "eek",
             :backtrace => failing_backtrace
           },
+          :rerun_argument => formatter.output_hash[:examples][1][:rerun_argument],
         },
         {
           :id => its[2].id,
@@ -78,6 +80,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
           :line_number => pending_line,
           :run_time => formatter.output_hash[:examples][2][:run_time],
           :pending_message => "world peace",
+          :rerun_argument => formatter.output_hash[:examples][2][:rerun_argument],
         },
       ],
       :summary => {
@@ -265,6 +268,119 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
 
       it "ranks the example groups by average time" do |ex|
         expect(formatter.output_hash[:profile][:groups].first[:description]).to eq("slow group")
+      end
+    end
+  end
+
+  describe "rerun_argument" do
+    let(:example_with_unique_location) do
+      example = new_example
+      allow(example).to receive(:location_rerun_argument) { "unique_spec.rb:1" }
+      allow(example).to receive(:id) { "unique_id" }
+      example
+    end
+
+    let(:example_with_duplicate_location_1) do
+      example = new_example
+      allow(example).to receive(:location_rerun_argument) { "duplicate_spec.rb:2" }
+      allow(example).to receive(:id) { "duplicate_id_1" }
+      example
+    end
+
+    let(:example_with_duplicate_location_2) do
+      example = new_example
+      allow(example).to receive(:location_rerun_argument) { "duplicate_spec.rb:2" }
+      allow(example).to receive(:id) { "duplicate_id_2" }
+      example
+    end
+
+    let(:examples_notification) do
+      lambda do |examples|
+        reporter = instance_double(RSpec::Core::Reporter)
+        allow(reporter).to receive(:examples) { examples }
+        allow(reporter).to receive(:notifications) { examples.map { |e| RSpec::Core::Notifications::ExampleNotification.for(e) } }
+        RSpec::Core::Notifications::ExamplesNotification.new(reporter)
+      end
+    end
+
+    context "when no duplicate locations" do
+      it "uses location_rerun_argument for each example" do
+        examples = [example_with_unique_location]
+        send_notification :stop, examples_notification.call(examples)
+
+        expect(formatter.output_hash[:examples][0][:rerun_argument]).to eq("unique_spec.rb:1")
+      end
+    end
+
+    context "when there are duplicate locations" do
+      it "uses example.id for duplicates" do
+        examples = [example_with_duplicate_location_1, example_with_duplicate_location_2]
+        send_notification :stop, examples_notification.call(examples)
+
+        expect(formatter.output_hash[:examples][0][:rerun_argument]).to eq("duplicate_id_1")
+        expect(formatter.output_hash[:examples][1][:rerun_argument]).to eq("duplicate_id_2")
+      end
+    end
+
+    context "when force_line_number_for_spec_rerun is true" do
+      before { allow(RSpec.configuration).to receive(:force_line_number_for_spec_rerun) { true } }
+
+      it "still uses location_rerun_argument even if there are duplicates" do
+        examples = [example_with_duplicate_location_1, example_with_duplicate_location_2]
+        send_notification :stop, examples_notification.call(examples)
+
+        expect(formatter.output_hash[:examples][0][:rerun_argument]).to eq("duplicate_spec.rb:2")
+        expect(formatter.output_hash[:examples][1][:rerun_argument]).to eq("duplicate_spec.rb:2")
+      end
+    end
+
+    context "for different example statuses" do
+      it "includes rerun_argument for passed, failed, pending, and pending fixed examples" do
+        passed_example = new_example(:status => :passed)
+        failed_example = new_example(:status => :failed)
+        pending_example = new_example(:status => :pending)
+
+        allow(passed_example).to receive(:location_rerun_argument) { "passed_spec.rb:1" }
+        allow(passed_example).to receive(:id) { "passed_id" }
+        allow(failed_example).to receive(:location_rerun_argument) { "failed_spec.rb:2" }
+        allow(failed_example).to receive(:id) { "failed_id" }
+        allow(pending_example).to receive(:location_rerun_argument) { "pending_spec.rb:3" }
+        allow(pending_example).to receive(:id) { "pending_id" }
+
+        examples = [passed_example, failed_example, pending_example]
+        send_notification :stop, examples_notification.call(examples)
+
+        formatter.output_hash[:examples].each do |example_hash|
+          expect(example_hash).to have_key(:rerun_argument)
+        end
+      end
+    end
+
+    context "in dump_profile" do
+      it "uses the same rerun_argument logic for slowest examples" do
+        slow_example = new_example
+        fast_example = new_example
+        allow(slow_example).to receive(:location_rerun_argument) { "slow_spec.rb:1" }
+        allow(slow_example).to receive(:id) { "slow_id" }
+        allow(slow_example.execution_result).to receive(:run_time) { 2.0 }
+        allow(fast_example).to receive(:location_rerun_argument) { "fast_spec.rb:2" }
+        allow(fast_example).to receive(:id) { "fast_id" }
+        allow(fast_example.execution_result).to receive(:run_time) { 1.0 }
+
+        examples = [slow_example, fast_example]
+        send_notification :dump_profile, profile_notification(3.0, examples, 10)
+
+        expect(formatter.output_hash[:profile][:examples][0]).to have_key(:rerun_argument)
+      end
+
+      it "handles direct dump_profile without prior stop gracefully" do
+        examples = [example_with_duplicate_location_1, example_with_duplicate_location_2]
+
+        expect {
+          send_notification :dump_profile, profile_notification(0.5, examples, 10)
+        }.not_to raise_error
+
+        expect(formatter.output_hash[:profile][:examples][0]).to have_key(:rerun_argument)
       end
     end
   end
