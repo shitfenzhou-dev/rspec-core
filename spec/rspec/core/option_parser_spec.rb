@@ -287,6 +287,36 @@ module RSpec::Core
             options = Parser.parse([option, 'foo:3.146'])
             expect(options[:inclusion_filter]).to eq(:foo => 3.146)
           end
+
+          it "treats '3x146' as string '3x146'" do
+            options = Parser.parse([option, 'foo:3x146'])
+            expect(options[:inclusion_filter]).to eq(:foo => '3x146')
+          end
+
+          it "treats '3-146' as string '3-146'" do
+            options = Parser.parse([option, 'foo:3-146'])
+            expect(options[:inclusion_filter]).to eq(:foo => '3-146')
+          end
+
+          it "treats '3.14.6' as string '3.14.6'" do
+            options = Parser.parse([option, 'foo:3.14.6'])
+            expect(options[:inclusion_filter]).to eq(:foo => '3.14.6')
+          end
+
+          it "treats '1e3' as string '1e3'" do
+            options = Parser.parse([option, 'foo:1e3'])
+            expect(options[:inclusion_filter]).to eq(:foo => '1e3')
+          end
+
+          it "treats '.5' as string '.5'" do
+            options = Parser.parse([option, 'foo:.5'])
+            expect(options[:inclusion_filter]).to eq(:foo => '.5')
+          end
+
+          it "treats '5.' as string '5.'" do
+            options = Parser.parse([option, 'foo:5.'])
+            expect(options[:inclusion_filter]).to eq(:foo => '5.')
+          end
         end
 
         context "with ~" do
@@ -308,6 +338,21 @@ module RSpec::Core
           it "treats 'false' as false" do
             options = Parser.parse([option, '~foo:false'])
             expect(options[:exclusion_filter]).to eq(:foo => false)
+          end
+
+          it "treats '3x146' as string '3x146'" do
+            options = Parser.parse([option, '~foo:3x146'])
+            expect(options[:exclusion_filter]).to eq(:foo => '3x146')
+          end
+
+          it "treats '3-146' as string '3-146'" do
+            options = Parser.parse([option, '~foo:3-146'])
+            expect(options[:exclusion_filter]).to eq(:foo => '3-146')
+          end
+
+          it "treats '3.14.6' as string '3.14.6'" do
+            options = Parser.parse([option, '~foo:3.14.6'])
+            expect(options[:exclusion_filter]).to eq(:foo => '3.14.6')
           end
         end
       end

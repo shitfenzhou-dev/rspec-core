@@ -252,17 +252,7 @@ FILTERING
           name, value = tag.gsub(/^(~@|~|@)/, '').split(':', 2)
           name = name.to_sym
 
-          parsed_value = case value
-                         when  nil        then true # The default value for tags is true
-                         when 'true'      then true
-                         when 'false'     then false
-                         when 'nil'       then nil
-                         when /^:/        then value[1..-1].to_sym
-                         when /^\d+$/     then Integer(value)
-                         when /^\d+.\d+$/ then Float(value)
-                         else
-                           value
-                         end
+          parsed_value = parse_tag_value(value)
 
           add_tag_filter(options, filter_type, name, parsed_value)
         end
@@ -308,6 +298,20 @@ FILTERING
     # rubocop:enable Metrics/MethodLength
     # rubocop:enable Metrics/CyclomaticComplexity
     # rubocop:enable Metrics/PerceivedComplexity
+
+    def parse_tag_value(value)
+      case value
+      when  nil        then true # The default value for tags is true
+      when 'true'      then true
+      when 'false'     then false
+      when 'nil'       then nil
+      when /^:/        then value[1..-1].to_sym
+      when /^\d+$/     then Integer(value)
+      when /^\d+\.\d+$/ then Float(value)
+      else
+        value
+      end
+    end
 
     def add_tag_filter(options, filter_type, tag_name, value=true)
       (options[filter_type] ||= {})[tag_name] = value

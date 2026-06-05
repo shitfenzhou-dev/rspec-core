@@ -1,0 +1,107 @@
+diff --git a/lib/rspec/core/option_parser.rb b/lib/rspec/core/option_parser.rb
+index e239e87a..07206205 100644
+--- a/lib/rspec/core/option_parser.rb
++++ b/lib/rspec/core/option_parser.rb
+@@ -252,17 +252,7 @@ FILTERING
+           name, value = tag.gsub(/^(~@|~|@)/, '').split(':', 2)
+           name = name.to_sym
+ 
+-          parsed_value = case value
+-                         when  nil        then true # The default value for tags is true
+-                         when 'true'      then true
+-                         when 'false'     then false
+-                         when 'nil'       then nil
+-                         when /^:/        then value[1..-1].to_sym
+-                         when /^\d+$/     then Integer(value)
+-                         when /^\d+.\d+$/ then Float(value)
+-                         else
+-                           value
+-                         end
++          parsed_value = parse_tag_value(value)
+ 
+           add_tag_filter(options, filter_type, name, parsed_value)
+         end
+@@ -309,6 +299,20 @@ FILTERING
+     # rubocop:enable Metrics/CyclomaticComplexity
+     # rubocop:enable Metrics/PerceivedComplexity
+ 
++    def parse_tag_value(value)
++      case value
++      when  nil        then true # The default value for tags is true
++      when 'true'      then true
++      when 'false'     then false
++      when 'nil'       then nil
++      when /^:/        then value[1..-1].to_sym
++      when /^\d+$/     then Integer(value)
++      when /^\d+\.\d+$/ then Float(value)
++      else
++        value
++      end
++    end
++
+     def add_tag_filter(options, filter_type, tag_name, value=true)
+       (options[filter_type] ||= {})[tag_name] = value
+     end
+diff --git a/spec/rspec/core/option_parser_spec.rb b/spec/rspec/core/option_parser_spec.rb
+index af3edf4e..71352035 100644
+--- a/spec/rspec/core/option_parser_spec.rb
++++ b/spec/rspec/core/option_parser_spec.rb
+@@ -287,6 +287,36 @@ module RSpec::Core
+             options = Parser.parse([option, 'foo:3.146'])
+             expect(options[:inclusion_filter]).to eq(:foo => 3.146)
+           end
++
++          it "treats '3x146' as string '3x146'" do
++            options = Parser.parse([option, 'foo:3x146'])
++            expect(options[:inclusion_filter]).to eq(:foo => '3x146')
++          end
++
++          it "treats '3-146' as string '3-146'" do
++            options = Parser.parse([option, 'foo:3-146'])
++            expect(options[:inclusion_filter]).to eq(:foo => '3-146')
++          end
++
++          it "treats '3.14.6' as string '3.14.6'" do
++            options = Parser.parse([option, 'foo:3.14.6'])
++            expect(options[:inclusion_filter]).to eq(:foo => '3.14.6')
++          end
++
++          it "treats '1e3' as string '1e3'" do
++            options = Parser.parse([option, 'foo:1e3'])
++            expect(options[:inclusion_filter]).to eq(:foo => '1e3')
++          end
++
++          it "treats '.5' as string '.5'" do
++            options = Parser.parse([option, 'foo:.5'])
++            expect(options[:inclusion_filter]).to eq(:foo => '.5')
++          end
++
++          it "treats '5.' as string '5.'" do
++            options = Parser.parse([option, 'foo:5.'])
++            expect(options[:inclusion_filter]).to eq(:foo => '5.')
++          end
+         end
+ 
+         context "with ~" do
+@@ -309,6 +339,21 @@ module RSpec::Core
+             options = Parser.parse([option, '~foo:false'])
+             expect(options[:exclusion_filter]).to eq(:foo => false)
+           end
++
++          it "treats '3x146' as string '3x146'" do
++            options = Parser.parse([option, '~foo:3x146'])
++            expect(options[:exclusion_filter]).to eq(:foo => '3x146')
++          end
++
++          it "treats '3-146' as string '3-146'" do
++            options = Parser.parse([option, '~foo:3-146'])
++            expect(options[:exclusion_filter]).to eq(:foo => '3-146')
++          end
++
++          it "treats '3.14.6' as string '3.14.6'" do
++            options = Parser.parse([option, '~foo:3.14.6'])
++            expect(options[:exclusion_filter]).to eq(:foo => '3.14.6')
++          end
+         end
+       end
+     end
