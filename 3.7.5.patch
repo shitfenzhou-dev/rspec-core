@@ -1,0 +1,279 @@
+diff --git a/lib/rspec/core/formatters/json_formatter.rb b/lib/rspec/core/formatters/json_formatter.rb
+index 7c6fde82..d02fa0d1 100644
+--- a/lib/rspec/core/formatters/json_formatter.rb
++++ b/lib/rspec/core/formatters/json_formatter.rb
+@@ -33,6 +33,9 @@ module RSpec
+         end
+ 
+         def stop(group_notification)
++          all_examples = group_notification.notifications.map(&:example)
++          @duplicate_rerun_locations = compute_duplicate_rerun_locations(all_examples)
++
+           @output_hash[:examples] = group_notification.notifications.map do |notification|
+             format_example(notification.example).tap do |hash|
+               e = notification.example.exception
+@@ -66,6 +69,7 @@ module RSpec
+         # @api private
+         def dump_profile_slowest_examples(profile)
+           @output_hash[:profile] = {}
++          @duplicate_rerun_locations ||= compute_duplicate_rerun_locations(profile.slowest_examples)
+           @output_hash[:profile][:examples] = profile.slowest_examples.map do |example|
+             format_example(example).tap do |hash|
+               hash[:run_time] = example.execution_result.run_time
+@@ -95,8 +99,25 @@ module RSpec
+             :line_number  => example.metadata[:line_number],
+             :run_time => example.execution_result.run_time,
+             :pending_message => example.execution_result.pending_message,
++            :rerun_argument => rerun_argument_for(example),
+           }
+         end
++
++        def rerun_argument_for(example)
++          location = example.location_rerun_argument
++          return location unless @duplicate_rerun_locations && @duplicate_rerun_locations.include?(location)
++          return location if RSpec.configuration.force_line_number_for_spec_rerun
++          example.id
++        end
++
++        def compute_duplicate_rerun_locations(examples)
++          locations = examples.map(&:location_rerun_argument)
++          ::RSpec::Core::Set.new.tap do |s|
++            locations.group_by { |l| l }.each do |l, ls|
++              s << l if ls.count > 1
++            end
++          end
++        end
+       end
+     end
+   end
+diff --git a/spec/rspec/core/formatters/json_formatter_spec.rb b/spec/rspec/core/formatters/json_formatter_spec.rb
+index 2f54d6c7..a4f0551d 100644
+--- a/spec/rspec/core/formatters/json_formatter_spec.rb
++++ b/spec/rspec/core/formatters/json_formatter_spec.rb
+@@ -53,6 +53,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :line_number => succeeding_line,
+           :run_time => formatter.output_hash[:examples][0][:run_time],
+           :pending_message => nil,
++          :rerun_argument => formatter.output_hash[:examples][0][:rerun_argument],
+         },
+         {
+           :id => its[1].id,
+@@ -68,6 +69,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+             :message   => "eek",
+             :backtrace => failing_backtrace
+           },
++          :rerun_argument => formatter.output_hash[:examples][1][:rerun_argument],
+         },
+         {
+           :id => its[2].id,
+@@ -78,6 +80,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :line_number => pending_line,
+           :run_time => formatter.output_hash[:examples][2][:run_time],
+           :pending_message => "world peace",
++          :rerun_argument => formatter.output_hash[:examples][2][:rerun_argument],
+         },
+       ],
+       :summary => {
+@@ -268,4 +271,202 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+       end
+     end
+   end
++
++  describe ":rerun_argument field" do
++    def build_example(overrides = {})
++      result = RSpec::Core::Example::ExecutionResult.new
++      result.started_at = ::Time.now
++      status = overrides.fetch(:status, :passed)
++      result.record_finished(status, ::Time.now)
++      result.exception = Exception.new if status == :failed
++      if overrides.delete(:pending_fixed)
++        result.pending_fixed = true
++      end
++
++      defaults = {
++        :description => "Example",
++        :full_description => "Example",
++        :example_group => group,
++        :execution_result => result,
++        :location => "",
++        :location_rerun_argument => "./spec/test_spec.rb:1",
++        :id => "./spec/test_spec.rb:1:1",
++        :exception => (status == :failed ? Exception.new : nil),
++        :metadata => {
++          :shared_group_inclusion_backtrace => [],
++          :file_path => "./spec/test_spec.rb",
++          :line_number => 1
++        }
++      }
++
++      instance_double(RSpec::Core::Example, defaults.merge(overrides))
++    end
++
++    def build_stop_notification_from(*examples)
++      notifications = examples.map do |ex|
++        double(:example => ex, :formatted_backtrace => [])
++      end
++      double(:notifications => notifications)
++    end
++
++    context "when all examples have unique location_rerun_argument" do
++      it "uses location_rerun_argument as rerun_argument" do
++        ex1 = build_example(:location_rerun_argument => "./spec/a_spec.rb:1", :id => "./spec/a_spec.rb:1:1")
++        ex2 = build_example(:location_rerun_argument => "./spec/a_spec.rb:2", :id => "./spec/a_spec.rb:2:1")
++
++        formatter.stop(build_stop_notification_from(ex1, ex2))
++
++        examples = formatter.output_hash[:examples]
++        expect(examples[0][:rerun_argument]).to eq("./spec/a_spec.rb:1")
++        expect(examples[1][:rerun_argument]).to eq("./spec/a_spec.rb:2")
++      end
++    end
++
++    context "when multiple examples share the same location_rerun_argument" do
++      it "falls back to example.id for all duplicates" do
++        ex1 = build_example(:location_rerun_argument => "./spec/a_spec.rb:1", :id => "./spec/a_spec.rb:1:1")
++        ex2 = build_example(:location_rerun_argument => "./spec/a_spec.rb:1", :id => "./spec/a_spec.rb:1:2")
++        ex3 = build_example(:location_rerun_argument => "./spec/a_spec.rb:2", :id => "./spec/a_spec.rb:2:1")
++
++        formatter.stop(build_stop_notification_from(ex1, ex2, ex3))
++
++        examples = formatter.output_hash[:examples]
++        expect(examples[0][:rerun_argument]).to eq("./spec/a_spec.rb:1:1")
++        expect(examples[1][:rerun_argument]).to eq("./spec/a_spec.rb:1:2")
++        expect(examples[2][:rerun_argument]).to eq("./spec/a_spec.rb:2")
++      end
++    end
++
++    context "when force_line_number_for_spec_rerun is true" do
++      around do |ex|
++        original = RSpec.configuration.force_line_number_for_spec_rerun
++        RSpec.configuration.force_line_number_for_spec_rerun = true
++        ex.run
++        RSpec.configuration.force_line_number_for_spec_rerun = original
++      end
++
++      it "uses location_rerun_argument even for duplicates" do
++        ex1 = build_example(:location_rerun_argument => "./spec/a_spec.rb:1", :id => "./spec/a_spec.rb:1:1")
++        ex2 = build_example(:location_rerun_argument => "./spec/a_spec.rb:1", :id => "./spec/a_spec.rb:1:2")
++
++        formatter.stop(build_stop_notification_from(ex1, ex2))
++
++        examples = formatter.output_hash[:examples]
++        expect(examples[0][:rerun_argument]).to eq("./spec/a_spec.rb:1")
++        expect(examples[1][:rerun_argument]).to eq("./spec/a_spec.rb:1")
++      end
++    end
++
++    context "for different example statuses" do
++      it "includes rerun_argument for passed examples" do
++        ex = build_example(:status => :passed, :location_rerun_argument => "./spec/a_spec.rb:5", :id => "./spec/a_spec.rb:5:1")
++        formatter.stop(build_stop_notification_from(ex))
++        expect(formatter.output_hash[:examples][0][:rerun_argument]).to eq("./spec/a_spec.rb:5")
++      end
++
++      it "includes rerun_argument for failed examples" do
++        ex = build_example(:status => :failed, :location_rerun_argument => "./spec/a_spec.rb:5", :id => "./spec/a_spec.rb:5:1")
++        formatter.stop(build_stop_notification_from(ex))
++        expect(formatter.output_hash[:examples][0][:rerun_argument]).to eq("./spec/a_spec.rb:5")
++      end
++
++      it "includes rerun_argument for pending examples" do
++        result = RSpec::Core::Example::ExecutionResult.new
++        result.started_at = ::Time.now
++        result.record_finished(:pending, ::Time.now)
++        result.pending_message = "not ready"
++
++        ex = instance_double(RSpec::Core::Example,
++          :description => "Example",
++          :full_description => "Example",
++          :example_group => group,
++          :execution_result => result,
++          :location => "",
++          :location_rerun_argument => "./spec/a_spec.rb:5",
++          :id => "./spec/a_spec.rb:5:1",
++          :exception => nil,
++          :metadata => { :shared_group_inclusion_backtrace => [], :file_path => "./spec/a_spec.rb", :line_number => 5 }
++        )
++
++        formatter.stop(build_stop_notification_from(ex))
++        expect(formatter.output_hash[:examples][0][:rerun_argument]).to eq("./spec/a_spec.rb:5")
++      end
++
++      it "includes rerun_argument for pending fixed examples" do
++        result = RSpec::Core::Example::ExecutionResult.new
++        result.started_at = ::Time.now
++        result.record_finished(:pending, ::Time.now)
++        result.pending_fixed = true
++        result.pending_message = "was pending but passed"
++
++        ex = instance_double(RSpec::Core::Example,
++          :description => "Example",
++          :full_description => "Example",
++          :example_group => group,
++          :execution_result => result,
++          :location => "",
++          :location_rerun_argument => "./spec/a_spec.rb:5",
++          :id => "./spec/a_spec.rb:5:1",
++          :exception => nil,
++          :metadata => { :shared_group_inclusion_backtrace => [], :file_path => "./spec/a_spec.rb", :line_number => 5 }
++        )
++
++        formatter.stop(build_stop_notification_from(ex))
++        expect(formatter.output_hash[:examples][0][:rerun_argument]).to eq("./spec/a_spec.rb:5")
++      end
++    end
++
++    context "in profile output" do
++      it "includes rerun_argument for profile slowest examples" do
++        setup_profiler
++        grp = RSpec.describe("profile group") do
++          example("example") { }
++        end
++        grp.run(reporter)
++        examples = grp.examples
++        send_notification :dump_profile, profile_notification(0.5, examples, 10)
++
++        profile_examples = formatter.output_hash[:profile][:examples]
++        expect(profile_examples.first).to have_key(:rerun_argument)
++      end
++
++      it "uses duplicate detection from the full run when stop was called first" do
++        ex1 = build_example(:location_rerun_argument => "./spec/a_spec.rb:1", :id => "./spec/a_spec.rb:1:1")
++        ex2 = build_example(:location_rerun_argument => "./spec/a_spec.rb:1", :id => "./spec/a_spec.rb:1:2")
++        ex3 = build_example(:location_rerun_argument => "./spec/a_spec.rb:2", :id => "./spec/a_spec.rb:2:1")
++
++        formatter.stop(build_stop_notification_from(ex1, ex2, ex3))
++
++        profile = double(:slowest_examples => [ex1], :slow_duration => 0.5, :duration => 1.0)
++        formatter.dump_profile_slowest_examples(profile)
++
++        profile_example = formatter.output_hash[:profile][:examples][0]
++        expect(profile_example[:rerun_argument]).to eq("./spec/a_spec.rb:1:1")
++      end
++    end
++
++    context "when dump_profile is called without stop" do
++      it "does not raise an error and computes rerun_argument from profile examples" do
++        ex1 = build_example(:location_rerun_argument => "./spec/a_spec.rb:1", :id => "./spec/a_spec.rb:1:1")
++
++        profile = double(:slowest_examples => [ex1], :slow_duration => 0.5, :duration => 1.0)
++        expect { formatter.dump_profile_slowest_examples(profile) }.not_to raise_error
++
++        profile_example = formatter.output_hash[:profile][:examples][0]
++        expect(profile_example[:rerun_argument]).to eq("./spec/a_spec.rb:1")
++      end
++
++      it "detects duplicates within profile examples as a fallback" do
++        ex1 = build_example(:location_rerun_argument => "./spec/a_spec.rb:1", :id => "./spec/a_spec.rb:1:1")
++        ex2 = build_example(:location_rerun_argument => "./spec/a_spec.rb:1", :id => "./spec/a_spec.rb:1:2")
++
++        profile = double(:slowest_examples => [ex1, ex2], :slow_duration => 0.5, :duration => 1.0)
++        formatter.dump_profile_slowest_examples(profile)
++
++        profile_examples = formatter.output_hash[:profile][:examples]
++        expect(profile_examples[0][:rerun_argument]).to eq("./spec/a_spec.rb:1:1")
++        expect(profile_examples[1][:rerun_argument]).to eq("./spec/a_spec.rb:1:2")
++      end
++    end
++  end
+ end

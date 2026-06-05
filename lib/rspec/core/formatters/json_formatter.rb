@@ -33,6 +33,9 @@ module RSpec
         end
 
         def stop(group_notification)
+          all_examples = group_notification.notifications.map(&:example)
+          @duplicate_rerun_locations = compute_duplicate_rerun_locations(all_examples)
+
           @output_hash[:examples] = group_notification.notifications.map do |notification|
             format_example(notification.example).tap do |hash|
               e = notification.example.exception
@@ -66,6 +69,7 @@ module RSpec
         # @api private
         def dump_profile_slowest_examples(profile)
           @output_hash[:profile] = {}
+          @duplicate_rerun_locations ||= compute_duplicate_rerun_locations(profile.slowest_examples)
           @output_hash[:profile][:examples] = profile.slowest_examples.map do |example|
             format_example(example).tap do |hash|
               hash[:run_time] = example.execution_result.run_time
@@ -95,7 +99,24 @@ module RSpec
             :line_number  => example.metadata[:line_number],
             :run_time => example.execution_result.run_time,
             :pending_message => example.execution_result.pending_message,
+            :rerun_argument => rerun_argument_for(example),
           }
+        end
+
+        def rerun_argument_for(example)
+          location = example.location_rerun_argument
+          return location unless @duplicate_rerun_locations && @duplicate_rerun_locations.include?(location)
+          return location if RSpec.configuration.force_line_number_for_spec_rerun
+          example.id
+        end
+
+        def compute_duplicate_rerun_locations(examples)
+          locations = examples.map(&:location_rerun_argument)
+          ::RSpec::Core::Set.new.tap do |s|
+            locations.group_by { |l| l }.each do |l, ls|
+              s << l if ls.count > 1
+            end
+          end
         end
       end
     end
