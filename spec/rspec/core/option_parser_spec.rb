@@ -240,6 +240,24 @@ module RSpec::Core
       end
     end
 
+    describe "--exclude-pattern" do
+      it "sets the exclude pattern" do
+        options = Parser.parse(['--exclude-pattern', 'spec/unit/**/*.spec'])
+        expect(options[:exclude_pattern]).to eq('spec/unit/**/*.spec')
+      end
+
+      it 'combines multiple exclude patterns' do
+        options = Parser.parse(['--exclude-pattern', 'spec/unit/**/*.spec', '--exclude-pattern', 'spec/integration/**/*.spec'])
+        expect(options[:exclude_pattern]).to eq('spec/unit/**/*.spec,spec/integration/**/*.spec')
+      end
+
+      it 'maintains separate values when both --pattern and --exclude-pattern are used' do
+        options = Parser.parse(['--pattern', 'spec/**/*.spec', '--exclude-pattern', 'spec/slow/**/*.spec'])
+        expect(options[:pattern]).to eq('spec/**/*.spec')
+        expect(options[:exclude_pattern]).to eq('spec/slow/**/*.spec')
+      end
+    end
+
     %w[--tag -t].each do |option|
       describe option do
         context "without ~" do
