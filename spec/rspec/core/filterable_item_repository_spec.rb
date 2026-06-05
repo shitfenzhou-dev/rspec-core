@@ -222,6 +222,121 @@ module RSpec
               end
             end
 
+            context "when a proc is nested inside a hash value" do
+              let(:nested_proc) do
+                return_val = true
+                Proc.new { return_val.tap { |v| return_val = !v } }
+              end
+
+              before do
+                add_item item_4, { :db => { :enabled => nested_proc } }
+              end
+
+              it 're-evaluates the proc each time, skipping memoization' do
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2, item_4)
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2)
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2, item_4)
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2)
+
+                expect(call_counts[{ :db => { :enabled => nested_proc } }]).to eq(4)
+              end
+            end
+
+            context "when a nested hash has no proc" do
+              before do
+                add_item item_4, { :db => { :enabled => true } }
+              end
+
+              it 'still performs memoization for the nested hash filter' do
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:db => { :enabled => true })).to contain_exactly(item_2, item_4)
+                expect(repo.items_for(:db => { :enabled => true })).to contain_exactly(item_2, item_4)
+
+                expect(call_counts[{ :db => { :enabled => true } }]).to eq(1)
+              end
+            end
+
+            context "when a proc is deeply nested inside a hash value" do
+              let(:deep_proc) do
+                return_val = true
+                Proc.new { return_val.tap { |v| return_val = !v } }
+              end
+
+              before do
+                add_item item_4, { :service => { :db => { :enabled => deep_proc } } }
+              end
+
+              it 'identifies the top-level key as proc-sensitive' do
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:service => { :db => { :enabled => nil } })).to contain_exactly(item_2, item_4)
+                expect(repo.items_for(:service => { :db => { :enabled => nil } })).to contain_exactly(item_2)
+
+                expect(call_counts[{ :service => { :db => { :enabled => deep_proc } } }]).to eq(2)
+              end
+            end
+
+            context "when an item with a nested proc is appended after initial lookups" do
+              let(:nested_proc) do
+                return_val = true
+                Proc.new { return_val.tap { |v| return_val = !v } }
+              end
+
+              it 'correctly updates proc-sensitive key state and skips memoization for that key' do
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:slow => true)).to contain_exactly(item_2)
+                expect(repo.items_for(:slow => true)).to contain_exactly(item_2)
+                expect(call_counts[:slow => true]).to eq(1)
+
+                add_item item_4, { :db => { :enabled => nested_proc } }
+
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2, item_4)
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2)
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2, item_4)
+              end
+            end
+
+            context "when an item with a nested proc is prepended" do
+              let(:nested_proc) do
+                return_val = true
+                Proc.new { return_val.tap { |v| return_val = !v } }
+              end
+
+              it 'correctly updates proc-sensitive key state' do
+                call_counts = track_metadata_filter_apply_calls
+
+                repo.prepend item_4, { :db => { :enabled => nested_proc } }
+
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4, item_2)
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2)
+              end
+            end
+
+            context "when an item with a nested proc is deleted" do
+              let(:nested_proc) do
+                return_val = true
+                Proc.new { return_val.tap { |v| return_val = !v } }
+              end
+
+              it 'rebuilds caches correctly so the key is no longer proc-sensitive' do
+                add_item item_4, { :db => { :enabled => nested_proc } }
+
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2, item_4)
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2)
+
+                repo.delete item_4, { :db => { :enabled => nested_proc } }
+
+                call_counts = track_metadata_filter_apply_calls
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2)
+                expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_2)
+                expect(call_counts[{ :db => { :enabled => nested_proc } }]).to eq(1)
+              end
+            end
+
             def track_metadata_filter_apply_calls
               Hash.new(0).tap do |call_counts|
                 allow(MetadataFilter).to receive(:apply?).and_wrap_original do |original, predicate, item_meta, request_meta|
