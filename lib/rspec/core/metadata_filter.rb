@@ -232,9 +232,16 @@ module RSpec
           end
         end
 
+        def metadata_contains_proc?(value)
+          return true if Proc === value
+          return false unless Hash === value
+
+          value.any? { |_nested_key, nested_value| metadata_contains_proc?(nested_value) }
+        end
+
         def proc_keys_from(metadata)
           metadata.each_with_object([]) do |(key, value), to_return|
-            to_return << key if Proc === value
+            to_return << key if metadata_contains_proc?(value)
           end
         end
 
@@ -243,7 +250,7 @@ module RSpec
           undef proc_keys_from
           def proc_keys_from(metadata)
             metadata.inject([]) do |to_return, (key, value)|
-              to_return << key if Proc === value
+              to_return << key if metadata_contains_proc?(value)
               to_return
             end
           end

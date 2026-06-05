@@ -207,6 +207,42 @@ module RSpec
               expect(call_counts[:slow => true]).to eq(1)
             end
 
+            it 're-evaluates top-level proc filters for repeated lookups' do
+              proc_filter = { :include_it => flip_proc }
+              add_item item_4, proc_filter
+              call_counts = track_metadata_filter_apply_calls
+
+              expect(repo.items_for(:include_it => nil)).to contain_exactly(item_4)
+              expect(repo.items_for(:include_it => nil)).to eq([])
+              expect(repo.items_for(:include_it => nil)).to contain_exactly(item_4)
+
+              expect(call_counts[proc_filter]).to eq(3)
+            end
+
+            it 're-evaluates nested hash proc filters for repeated lookups' do
+              proc_filter = { :db => { :enabled => flip_proc } }
+              add_item item_4, proc_filter
+              call_counts = track_metadata_filter_apply_calls
+
+              expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
+              expect(repo.items_for(:db => { :enabled => nil })).to eq([])
+              expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
+
+              expect(call_counts[proc_filter]).to eq(3)
+            end
+
+            it 'still memoizes nested hash filters that do not contain procs' do
+              nested_filter = { :db => { :enabled => true } }
+              add_item item_4, nested_filter
+              call_counts = track_metadata_filter_apply_calls
+
+              3.times do
+                expect(repo.items_for(:db => { :enabled => true }, :other => "foo")).to contain_exactly(item_4)
+              end
+
+              expect(call_counts[nested_filter]).to eq(1)
+            end
+
             context "when there are some proc keys" do
               before do
                 add_item item_4, { :include_it => flip_proc }
@@ -220,6 +256,49 @@ module RSpec
 
                 expect(call_counts[:slow => true]).to eq(1)
               end
+            end
+
+            it 'refreshes proc-sensitive key tracking when items are added' do
+              nested_filter = { :db => { :enabled => true } }
+              proc_filter = { :db => { :enabled => flip_proc } }
+              proc_item = FilterableItem.new("Proc Item")
+              add_item item_4, nested_filter
+              call_counts = track_metadata_filter_apply_calls
+
+              2.times do
+                expect(repo.items_for(:db => { :enabled => true })).to contain_exactly(item_4)
+              end
+
+              expect(call_counts[nested_filter]).to eq(1)
+
+              add_item proc_item, proc_filter
+
+              expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(proc_item)
+              expect(repo.items_for(:db => { :enabled => nil })).to eq([])
+
+              expect(call_counts[proc_filter]).to eq(2)
+            end
+
+            it 'rebuilds proc-sensitive key tracking when items are deleted' do
+              nested_filter = { :db => { :enabled => true } }
+              proc_filter = { :db => { :enabled => flip_proc } }
+              proc_item = FilterableItem.new("Proc Item")
+              repo.append item_4, nested_filter
+              repo.append proc_item, proc_filter
+              call_counts = track_metadata_filter_apply_calls
+
+              expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(proc_item)
+              expect(repo.items_for(:db => { :enabled => nil })).to eq([])
+
+              expect(call_counts[proc_filter]).to eq(2)
+
+              repo.delete(proc_item, proc_filter)
+
+              2.times do
+                expect(repo.items_for(:db => { :enabled => true })).to contain_exactly(item_4)
+              end
+
+              expect(call_counts[nested_filter]).to eq(1)
             end
 
             def track_metadata_filter_apply_calls
