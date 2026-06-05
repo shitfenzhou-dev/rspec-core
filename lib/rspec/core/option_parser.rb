@@ -229,7 +229,11 @@ FILTERING
 
         parser.on('--exclude-pattern PATTERN',
                   'Load files except those matching pattern. Opposite effect of --pattern.') do |o|
-          options[:exclude_pattern] = o
+          if options[:exclude_pattern]
+            options[:exclude_pattern] += ',' + o
+          else
+            options[:exclude_pattern] = o
+          end
         end
 
         parser.on('-e', '--example STRING', "Run examples whose full nested names include STRING (may be",

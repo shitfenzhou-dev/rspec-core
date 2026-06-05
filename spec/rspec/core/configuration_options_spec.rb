@@ -545,6 +545,16 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
       expect(parse_options("--format", "cli")[:formatters]).to eq([['cli']])
     end
 
+    it "prefers CLI over file options for exclude_pattern without concatenating across sources" do
+      create_fixture_file("./.rspec", "--exclude-pattern spec/project/**/*_spec.rb")
+      create_fixture_file("~/.rspec", "--exclude-pattern spec/global/**/*_spec.rb")
+      create_fixture_file("~/.config/rspec/options", "--exclude-pattern spec/xdg/**/*_spec.rb")
+
+      options = parse_options("--exclude-pattern", "spec/cli/**/*_spec.rb")
+
+      expect(options[:exclude_pattern]).to eq("spec/cli/**/*_spec.rb")
+    end
+
     it "prefers CLI over file options for filter inclusion" do
       create_fixture_file("./.rspec", "--tag ~slow")
       opts = config_options_object("--tag", "slow")
