@@ -263,7 +263,7 @@ module RSpec::Core
             expect(options[:inclusion_filter]).to eq(:foo => false)
           end
 
-          it "merges muliple invocations" do
+          it "lets later tags override earlier tags with the same name" do
             options = Parser.parse([option, 'foo:false', option, 'bar:true', option, 'foo:true'])
             expect(options[:inclusion_filter]).to eq(:foo => true, :bar => true)
           end
@@ -287,6 +287,13 @@ module RSpec::Core
             options = Parser.parse([option, 'foo:3.146'])
             expect(options[:inclusion_filter]).to eq(:foo => 3.146)
           end
+
+          %w[3x146 3-146 3.14.6 1e3 .5 5.].each do |value|
+            it "treats '#{value}' as a string" do
+              options = Parser.parse([option, "foo:#{value}"])
+              expect(options[:inclusion_filter]).to eq(:foo => value)
+            end
+          end
         end
 
         context "with ~" do
@@ -308,6 +315,11 @@ module RSpec::Core
           it "treats 'false' as false" do
             options = Parser.parse([option, '~foo:false'])
             expect(options[:exclusion_filter]).to eq(:foo => false)
+          end
+
+          it "treats malformed numeric-looking values as strings" do
+            options = Parser.parse([option, '~foo:3x146'])
+            expect(options[:exclusion_filter]).to eq(:foo => '3x146')
           end
         end
       end

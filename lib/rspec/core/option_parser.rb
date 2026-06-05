@@ -252,19 +252,7 @@ FILTERING
           name, value = tag.gsub(/^(~@|~|@)/, '').split(':', 2)
           name = name.to_sym
 
-          parsed_value = case value
-                         when  nil        then true # The default value for tags is true
-                         when 'true'      then true
-                         when 'false'     then false
-                         when 'nil'       then nil
-                         when /^:/        then value[1..-1].to_sym
-                         when /^\d+$/     then Integer(value)
-                         when /^\d+.\d+$/ then Float(value)
-                         else
-                           value
-                         end
-
-          add_tag_filter(options, filter_type, name, parsed_value)
+          add_tag_filter(options, filter_type, name, parse_tag_value(value))
         end
 
         parser.on('--default-path PATH', 'Set the default path where RSpec looks for examples (can',
@@ -311,6 +299,27 @@ FILTERING
 
     def add_tag_filter(options, filter_type, tag_name, value=true)
       (options[filter_type] ||= {})[tag_name] = value
+    end
+
+    def parse_tag_value(value)
+      case value
+      when nil
+        true
+      when 'true'
+        true
+      when 'false'
+        false
+      when 'nil'
+        nil
+      when /^:/
+        value[1..-1].to_sym
+      when /^\d+$/
+        Integer(value)
+      when /^\d+\.\d+$/
+        Float(value)
+      else
+        value
+      end
     end
 
     def set_fail_fast(options, value)

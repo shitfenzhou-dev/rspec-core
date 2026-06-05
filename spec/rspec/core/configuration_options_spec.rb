@@ -584,6 +584,20 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
       expect(parse_options[:formatters]).to be_nil
     end
 
+    it 'parses malformed numeric-looking tag values from .rspec as strings' do
+      create_fixture_file("./.rspec", "--tag foo:3x146")
+
+      expect { parse_options() }.not_to raise_error
+      expect(parse_options[:inclusion_filter]).to eq(:foo => '3x146')
+    end
+
+    it 'parses malformed numeric-looking tag values from SPEC_OPTS as strings' do
+      with_env_vars 'SPEC_OPTS' => '--tag foo:3x146' do
+        expect { parse_options() }.not_to raise_error
+        expect(parse_options[:inclusion_filter]).to eq(:foo => '3x146')
+      end
+    end
+
     context "with custom options file" do
       it "ignores project and global options files" do
         create_fixture_file("./.rspec", "--format project")
@@ -599,6 +613,13 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
         create_fixture_file("./custom.opts", "-e 'The quick brown fox jumps over the lazy dog'")
         options = parse_options("-O", "./custom.opts")
         expect(options[:full_description]).to eq([/The\ quick\ brown\ fox\ jumps\ over\ the\ lazy\ dog/])
+      end
+
+      it 'parses malformed numeric-looking tag values as strings' do
+        create_fixture_file("./custom.opts", "--tag foo:3x146")
+
+        expect { parse_options("-O", "./custom.opts") }.not_to raise_error
+        expect(parse_options("-O", "./custom.opts")[:inclusion_filter]).to eq(:foo => '3x146')
       end
     end
   end
