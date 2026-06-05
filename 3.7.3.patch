@@ -1,0 +1,189 @@
+diff --git a/lib/rspec/core/formatters/json_formatter.rb b/lib/rspec/core/formatters/json_formatter.rb
+index 7c6fde82..96320e5b 100644
+--- a/lib/rspec/core/formatters/json_formatter.rb
++++ b/lib/rspec/core/formatters/json_formatter.rb
+@@ -33,6 +33,7 @@ module RSpec
+         end
+ 
+         def stop(group_notification)
++          compute_duplicate_rerun_locations(group_notification.notifications.map(&:example))
+           @output_hash[:examples] = group_notification.notifications.map do |notification|
+             format_example(notification.example).tap do |hash|
+               e = notification.example.exception
+@@ -66,6 +67,9 @@ module RSpec
+         # @api private
+         def dump_profile_slowest_examples(profile)
+           @output_hash[:profile] = {}
++          unless @duplicate_rerun_locations
++            compute_duplicate_rerun_locations(profile.examples)
++          end
+           @output_hash[:profile][:examples] = profile.slowest_examples.map do |example|
+             format_example(example).tap do |hash|
+               hash[:run_time] = example.execution_result.run_time
+@@ -95,8 +99,25 @@ module RSpec
+             :line_number  => example.metadata[:line_number],
+             :run_time => example.execution_result.run_time,
+             :pending_message => example.execution_result.pending_message,
++            :rerun_argument => rerun_argument_for(example),
+           }
+         end
++
++        def rerun_argument_for(example)
++          location = example.location_rerun_argument
++          return location if RSpec.configuration.force_line_number_for_spec_rerun
++          return location unless @duplicate_rerun_locations.include?(location)
++          example.id
++        end
++
++        def compute_duplicate_rerun_locations(examples)
++          locations = examples.map(&:location_rerun_argument)
++          @duplicate_rerun_locations = Set.new.tap do |s|
++            locations.group_by { |l| l }.each do |l, ls|
++              s << l if ls.count > 1
++            end
++          end
++        end
+       end
+     end
+   end
+diff --git a/spec/rspec/core/formatters/json_formatter_spec.rb b/spec/rspec/core/formatters/json_formatter_spec.rb
+index 2f54d6c7..a663b72e 100644
+--- a/spec/rspec/core/formatters/json_formatter_spec.rb
++++ b/spec/rspec/core/formatters/json_formatter_spec.rb
+@@ -53,6 +53,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :line_number => succeeding_line,
+           :run_time => formatter.output_hash[:examples][0][:run_time],
+           :pending_message => nil,
++          :rerun_argument => "#{this_file}:#{succeeding_line}",
+         },
+         {
+           :id => its[1].id,
+@@ -63,6 +64,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :line_number => failing_line,
+           :run_time => formatter.output_hash[:examples][1][:run_time],
+           :pending_message => nil,
++          :rerun_argument => "#{this_file}:#{failing_line}",
+           :exception => {
+             :class     => "RuntimeError",
+             :message   => "eek",
+@@ -78,6 +80,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :line_number => pending_line,
+           :run_time => formatter.output_hash[:examples][2][:run_time],
+           :pending_message => "world peace",
++          :rerun_argument => "#{this_file}:#{pending_line}",
+         },
+       ],
+       :summary => {
+@@ -268,4 +271,112 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+       end
+     end
+   end
++
++  describe ":rerun_argument" do
++    def stub_example(location, id, file_path = "spec/foo_spec.rb", line_number = 1)
++      result = RSpec::Core::Example::ExecutionResult.new
++      result.started_at = ::Time.now
++      result.record_finished(:passed, ::Time.now)
++      instance_double(RSpec::Core::Example,
++        :id => id,
++        :description => "Example",
++        :full_description => "Example",
++        :execution_result => result,
++        :location_rerun_argument => location,
++        :exception => nil,
++        :metadata => {
++          :file_path => file_path,
++          :line_number => line_number,
++          :shared_group_inclusion_backtrace => []
++        }
++      )
++    end
++
++    it "uses location_rerun_argument when locations are unique" do
++      ex1 = stub_example("./spec/foo_spec.rb:1", "./spec/foo_spec.rb[1:1]")
++      ex2 = stub_example("./spec/foo_spec.rb:2", "./spec/foo_spec.rb[1:2]")
++      reporter.examples << ex1 << ex2
++      send_notification :stop, stop_notification
++
++      examples = formatter.output_hash[:examples]
++      expect(examples[0][:rerun_argument]).to eq("./spec/foo_spec.rb:1")
++      expect(examples[1][:rerun_argument]).to eq("./spec/foo_spec.rb:2")
++    end
++
++    it "falls back to example.id when multiple examples share the same location" do
++      ex1 = stub_example("./spec/foo_spec.rb:1", "./spec/foo_spec.rb[1:1]")
++      ex2 = stub_example("./spec/foo_spec.rb:1", "./spec/foo_spec.rb[1:2]")
++      reporter.examples << ex1 << ex2
++      send_notification :stop, stop_notification
++
++      examples = formatter.output_hash[:examples]
++      expect(examples[0][:rerun_argument]).to eq("./spec/foo_spec.rb[1:1]")
++      expect(examples[1][:rerun_argument]).to eq("./spec/foo_spec.rb[1:2]")
++    end
++
++    context "when force_line_number_for_spec_rerun is true" do
++      around do |example|
++        original = RSpec.configuration.force_line_number_for_spec_rerun
++        RSpec.configuration.force_line_number_for_spec_rerun = true
++        example.run
++        RSpec.configuration.force_line_number_for_spec_rerun = original
++      end
++
++      it "uses location_rerun_argument even when locations are duplicate" do
++        ex1 = stub_example("./spec/foo_spec.rb:1", "./spec/foo_spec.rb[1:1]")
++        ex2 = stub_example("./spec/foo_spec.rb:1", "./spec/foo_spec.rb[1:2]")
++        reporter.examples << ex1 << ex2
++        send_notification :stop, stop_notification
++
++        examples = formatter.output_hash[:examples]
++        expect(examples[0][:rerun_argument]).to eq("./spec/foo_spec.rb:1")
++        expect(examples[1][:rerun_argument]).to eq("./spec/foo_spec.rb:1")
++      end
++    end
++
++    it "includes rerun_argument for all examples" do
++      ex1 = stub_example("./spec/foo_spec.rb:1", "./spec/foo_spec.rb[1:1]")
++      ex2 = stub_example("./spec/foo_spec.rb:2", "./spec/foo_spec.rb[1:2]")
++      ex3 = stub_example("./spec/foo_spec.rb:3", "./spec/foo_spec.rb[1:3]")
++      reporter.examples << ex1 << ex2 << ex3
++      send_notification :stop, stop_notification
++
++      examples = formatter.output_hash[:examples]
++      expect(examples.size).to eq(3)
++      expect(examples).to all(have_key(:rerun_argument))
++    end
++
++    it "profile slowest examples use the same rerun_argument rules" do
++      setup_profiler
++      formatter
++
++      ex1 = stub_example("./spec/foo_spec.rb:1", "./spec/foo_spec.rb[1:1]")
++      ex2 = stub_example("./spec/foo_spec.rb:1", "./spec/foo_spec.rb[1:2]")
++      reporter.examples << ex1 << ex2
++      send_notification :stop, stop_notification
++      send_notification :dump_profile, profile_notification(0.5, [ex1, ex2], 10)
++
++      profile_examples = formatter.output_hash[:profile][:examples]
++      expect(profile_examples[0][:rerun_argument]).to eq("./spec/foo_spec.rb[1:1]")
++      expect(profile_examples[1][:rerun_argument]).to eq("./spec/foo_spec.rb[1:2]")
++    end
++
++    context "when dump_profile is called without stop" do
++      it "computes duplicate locations from profile examples and does not raise" do
++        setup_profiler
++        formatter
++
++        ex1 = stub_example("./spec/foo_spec.rb:1", "./spec/foo_spec.rb[1:1]")
++        ex2 = stub_example("./spec/foo_spec.rb:1", "./spec/foo_spec.rb[1:2]")
++
++        expect {
++          send_notification :dump_profile, profile_notification(0.5, [ex1, ex2], 10)
++        }.not_to raise_error
++
++        profile_examples = formatter.output_hash[:profile][:examples]
++        expect(profile_examples[0][:rerun_argument]).to eq("./spec/foo_spec.rb[1:1]")
++        expect(profile_examples[1][:rerun_argument]).to eq("./spec/foo_spec.rb[1:2]")
++      end
++    end
++  end
+ end
