@@ -53,6 +53,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
           :line_number => succeeding_line,
           :run_time => formatter.output_hash[:examples][0][:run_time],
           :pending_message => nil,
+          :rerun_argument => its[0].location_rerun_argument,
         },
         {
           :id => its[1].id,
@@ -68,6 +69,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
             :message   => "eek",
             :backtrace => failing_backtrace
           },
+          :rerun_argument => its[1].location_rerun_argument,
         },
         {
           :id => its[2].id,
@@ -78,6 +80,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
           :line_number => pending_line,
           :run_time => formatter.output_hash[:examples][2][:run_time],
           :pending_message => "world peace",
+          :rerun_argument => its[2].location_rerun_argument,
         },
       ],
       :summary => {
@@ -265,6 +268,86 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
 
       it "ranks the example groups by average time" do |ex|
         expect(formatter.output_hash[:profile][:groups].first[:description]).to eq("slow group")
+      end
+    end
+
+    describe "#rerun_argument" do
+      context "when no duplicate locations" do
+        let(:examples) { [] }
+        let(:group) do
+          RSpec.describe("test group") do
+            examples << it("first example") {}
+            examples << it("second example") {}
+          end
+        end
+
+        it "uses location_rerun_argument for all examples" do
+          reporter.report(2) { |r| group.run(r) }
+          
+          expect(formatter.output_hash[:examples].size).to eq(2)
+          expect(formatter.output_hash[:examples][0][:rerun_argument]).to eq(examples[0].location_rerun_argument)
+          expect(formatter.output_hash[:examples][1][:rerun_argument]).to eq(examples[1].location_rerun_argument)
+        end
+      end
+
+      context "when duplicate locations exist" do
+        let(:examples) { [] }
+        let(:shared_location) { "#{relative_path(__FILE__)}:100" }
+
+        before do
+          group = RSpec.describe("test group") do
+            examples << it("first example") {}
+            examples << it("second example") {}
+          end
+          
+          # Mock location_rerun_argument to return the same value for both examples
+          examples.each { |ex| allow(ex).to receive(:location_rerun_argument).and_return(shared_location) }
+          
+          reporter.report(2) { |r| group.run(r) }
+        end
+
+        it "uses example id for duplicate locations" do
+          expect(formatter.output_hash[:examples].size).to eq(2)
+          expect(formatter.output_hash[:examples][0][:rerun_argument]).to eq(examples[0].id)
+          expect(formatter.output_hash[:examples][1][:rerun_argument]).to eq(examples[1].id)
+        end
+
+        context "with force_line_number_for_spec_rerun set to true" do
+          around do |example|
+            original = RSpec.configuration.force_line_number_for_spec_rerun?
+            RSpec.configuration.force_line_number_for_spec_rerun = true
+            example.run
+            RSpec.configuration.force_line_number_for_spec_rerun = original
+          end
+
+          it "still uses location_rerun_argument even with duplicate locations" do
+            expect(formatter.output_hash[:examples].size).to eq(2)
+            expect(formatter.output_hash[:examples][0][:rerun_argument]).to eq(shared_location)
+            expect(formatter.output_hash[:examples][1][:rerun_argument]).to eq(shared_location)
+          end
+        end
+      end
+
+      context "with profile examples" do
+        let(:examples) { [] }
+        let(:group) do
+          RSpec.describe("test group") do
+            examples << it("slow example") {}
+          end
+        end
+
+        before do
+          setup_profiler
+        end
+
+        it "also includes rerun_argument in profile examples" do
+          group.run(reporter)
+          send_notification :dump_profile, profile_notification(0.5, group.examples, 1)
+          
+          profile_example = formatter.output_hash[:profile][:examples].first
+          expect(profile_example).to have_key(:rerun_argument)
+          expect(profile_example[:rerun_argument]).to eq(examples.first.location_rerun_argument)
+        end
       end
     end
   end
