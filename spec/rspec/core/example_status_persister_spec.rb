@@ -139,93 +139,70 @@ module RSpec::Core
   RSpec.describe "Example status merging" do
     let(:existing_spec_file) { Metadata.relative_path(__FILE__) }
 
-    context "when no examples from this or previous runs are given" do
-      it "returns an empty array" do
-        merged = merge(:this_run => [], :from_previous_runs => [])
-        expect(merged).to eq([])
-      end
+    it "returns an empty array when both runs are empty" do
+      merged = merge(:this_run => [], :from_previous_runs => [])
+      expect(merged).to eq([])
     end
 
-    context "when there are no examples from previous runs" do
-      it "returns the examples from this run" do
-        this_run = [
-          example(existing_spec_file, "1:1", "passed"),
-          example(existing_spec_file, "1:2", "failed")
-        ]
+    it "keeps examples that only appear in this run, even when they did not execute" do
+      this_run = [ example(existing_spec_file, "1:1", Configuration::UNKNOWN_STATUS) ]
 
-        merged = merge(:this_run => this_run, :from_previous_runs => [])
-        expect(merged).to match_array(this_run)
-      end
+      merged = merge(:this_run => this_run, :from_previous_runs => [])
+      expect(merged).to eq(this_run)
     end
 
-    context "when there are no examples from this run" do
-      it "returns the examples from the previous runs" do
-        from_previous_runs = [
-          example(existing_spec_file, "1:1", "passed"),
-          example(existing_spec_file, "1:2", "failed")
-        ]
+    it "deletes historical examples that disappear from a file loaded in this run" do
+      this_run = [ example(existing_spec_file, "1:1", "passed") ]
+      from_previous_runs = [
+        example(existing_spec_file, "1:1", "failed"),
+        example(existing_spec_file, "1:2", "failed")
+      ]
 
-        merged = merge(:this_run => [], :from_previous_runs => from_previous_runs)
-        expect(merged).to match_array(from_previous_runs)
-      end
+      merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
+      expect(merged).to eq(this_run)
     end
 
-    context "for examples that are only in the set for this run" do
-      it "takes them indiscriminately, even if they did not execute" do
-        this_run = [ example(existing_spec_file, "1:1", Configuration::UNKNOWN_STATUS) ]
+    it "keeps historical examples for files that were not loaded but still exist" do
+      from_previous_runs = [ example(existing_spec_file, "1:2", "failed") ]
 
-        merged = merge(:this_run => this_run, :from_previous_runs => [])
-        expect(merged).to match_array(this_run)
-      end
+      merged = merge(:this_run => [], :from_previous_runs => from_previous_runs)
+      expect(merged).to eq(from_previous_runs)
     end
 
-    context "for examples that are only in the set for previous runs" do
-      context "if there are other examples from this run for the same file " do
-        it "deletes them since the examples must no longer exist" do
-          this_run           = [ example(existing_spec_file, "1:1", "passed") ]
-          from_previous_runs = [ example(existing_spec_file, "1:2", "failed") ]
+    it "deletes historical examples when their file has been deleted" do
+      from_previous_runs = [ example("./some/deleted_path/foo_spec.rb", "1:2", "failed") ]
 
-          merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
-          expect(merged).to match_array(this_run)
-        end
-      end
-
-      context "if there are no other examples from this run for the same file" do
-        it "deletes them if the file no longer exist" do
-          from_previous_runs = [ example("./some/deleted_path/foo_spec.rb", "1:2", "failed") ]
-
-          merged = merge(:this_run => [], :from_previous_runs => from_previous_runs)
-          expect(merged).to eq([])
-        end
-
-        it "keeps them if the file exists because the examples may still exist" do
-          from_previous_runs = [ example(existing_spec_file, "1:2", "failed") ]
-
-          merged = merge(:this_run => [], :from_previous_runs => from_previous_runs)
-          expect(merged).to eq(from_previous_runs)
-        end
-      end
+      merged = merge(:this_run => [], :from_previous_runs => from_previous_runs)
+      expect(merged).to eq([])
     end
 
-    context "for examples that are in both sets" do
-      it "takes the status from this run as long as the example executed" do
-        this_run           = [ example("foo_spec.rb", "1:1", "passed") ]
-        from_previous_runs = [ example("foo_spec.rb", "1:1", "failed") ]
+    it "uses the status and extra attributes from this run when the example executed" do
+      this_run = [
+        example(existing_spec_file, "1:1", "passed", :run_time => "1 second", :custom => "current")
+      ]
 
-        merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
-        expect(merged).to match_array(this_run)
-      end
+      from_previous_runs = [
+        example(existing_spec_file, "1:1", "failed", :run_time => "2 seconds", :custom => "previous")
+      ]
 
-      it "takes the status from previous runs if the example was loaded but did not execute" do
-        this_run           = [ example("foo_spec.rb", "1:1", Configuration::UNKNOWN_STATUS) ]
-        from_previous_runs = [ example("foo_spec.rb", "1:1", "failed") ]
-
-        merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
-        expect(merged).to match_array(from_previous_runs)
-      end
+      merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
+      expect(merged).to eq(this_run)
     end
 
-    it 'sorts the returned examples to make the saved file more easily scannable' do
+    it "keeps the previous status and extra attributes when this run is #{Configuration::UNKNOWN_STATUS}" do
+      this_run = [
+        example(existing_spec_file, "1:1", Configuration::UNKNOWN_STATUS, :run_time => "", :custom => "current")
+      ]
+
+      from_previous_runs = [
+        example(existing_spec_file, "1:1", "failed", :run_time => "2 seconds", :custom => "previous")
+      ]
+
+      merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
+      expect(merged).to eq(from_previous_runs)
+    end
+
+    it 'sorts the merged examples by file path and numeric scoped id' do
       this_run = [
         ex_c_1_1  = example("c_spec.rb", "1:1",  "passed"),
         ex_a_1_2  = example("a_spec.rb", "1:2",  "failed"),
@@ -237,22 +214,17 @@ module RSpec::Core
       expect(merged).to eq([ ex_a_1_2, ex_a_1_9, ex_a_1_10, ex_c_1_1 ])
     end
 
-    it "preserves any extra attributes include in the example hashes" do
-      this_run = [
-        example(existing_spec_file, "1:1", "passed", :foo => 23),
-        example(existing_spec_file, "1:2", "failed", :bar => 12)
-      ]
+    it "does not mutate the provided arrays or example hashes" do
+      this_run = [ example(existing_spec_file, "1:1", "passed", :run_time => "1 second", :custom => "current") ]
+      from_previous_runs = [ example(existing_spec_file, "1:2", "failed", :run_time => "2 seconds", :custom => "previous") ]
 
-      from_previous_runs = [
-        example(existing_spec_file, "1:1", "passed", :foo => -23),
-        example(existing_spec_file, "1:2", "failed", :bar => -12)
-      ]
+      original_this_run = Marshal.load(Marshal.dump(this_run))
+      original_previous_runs = Marshal.load(Marshal.dump(from_previous_runs))
 
-      merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
-      expect(merged).to contain_exactly(
-        a_hash_including(:foo => 23),
-        a_hash_including(:bar => 12)
-      )
+      merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
+
+      expect(this_run).to eq(original_this_run)
+      expect(from_previous_runs).to eq(original_previous_runs)
     end
 
     def example(file, scoped_id, status, extras = {})

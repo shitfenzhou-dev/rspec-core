@@ -83,42 +83,48 @@ module RSpec
       end
 
       def merge
-        delete_previous_examples_that_no_longer_exist
+        merged_examples = previous_examples_to_merge
 
-        @this_run.merge(@from_previous_runs) do |_ex_id, new, old|
-          new.fetch(:status) == Configuration::UNKNOWN_STATUS ? old : new
-        end.values.sort_by(&method(:sort_value_from))
+        @this_run.each do |example_id, example_from_this_run|
+          merged_examples[example_id] = merged_example(example_from_this_run, merged_examples[example_id])
+        end
+
+        merged_examples.values.sort_by(&method(:sort_value_from))
       end
 
     private
 
       def hash_from(example_list)
-        example_list.inject({}) do |hash, example|
-          hash[example.fetch(:example_id)] = example
-          hash
+        example_list.each_with_object({}) do |example, hash|
+          hash[example.fetch(:example_id)] = example.dup
         end
       end
 
-      def delete_previous_examples_that_no_longer_exist
-        @from_previous_runs.delete_if do |ex_id, _|
-          example_must_no_longer_exist?(ex_id)
+      def previous_examples_to_merge
+        @from_previous_runs.select do |example_id, _|
+          keep_previous_example?(example_id)
         end
       end
 
-      def example_must_no_longer_exist?(ex_id)
-        # Obviously, it exists if it was loaded for this spec run...
-        return false if @this_run.key?(ex_id)
+      def keep_previous_example?(example_id)
+        return true if @this_run.key?(example_id)
 
-        spec_file = spec_file_from(ex_id)
+        spec_file = spec_file_from(example_id)
 
-        # `this_run` includes examples that were loaded but not executed.
-        # Given that, if the spec file for this example was loaded,
-        # but the id does not still exist, it's safe to assume that
-        # the example must no longer exist.
-        return true if loaded_spec_files.include?(spec_file)
+        return false if loaded_spec_files.include?(spec_file)
 
-        # The example may still exist as long as the file exists...
-        !@file_exists_cache[spec_file]
+        @file_exists_cache[spec_file]
+      end
+
+      def merged_example(example_from_this_run, example_from_previous_runs)
+        return example_from_this_run unless example_from_previous_runs
+        return example_from_previous_runs if unknown_status?(example_from_this_run)
+
+        example_from_this_run
+      end
+
+      def unknown_status?(example)
+        example.fetch(:status) == Configuration::UNKNOWN_STATUS
       end
 
       def loaded_spec_files
