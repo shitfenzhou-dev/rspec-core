@@ -83,10 +83,10 @@ module RSpec
       end
 
       def merge
-        delete_previous_examples_that_no_longer_exist
+        remove_stale_examples
 
         @this_run.merge(@from_previous_runs) do |_ex_id, new, old|
-          new.fetch(:status) == Configuration::UNKNOWN_STATUS ? old : new
+          resolve_conflict(new, old)
         end.values.sort_by(&method(:sort_value_from))
       end
 
@@ -99,26 +99,38 @@ module RSpec
         end
       end
 
-      def delete_previous_examples_that_no_longer_exist
+      def remove_stale_examples
         @from_previous_runs.delete_if do |ex_id, _|
-          example_must_no_longer_exist?(ex_id)
+          should_remove_from_history?(ex_id)
         end
       end
 
-      def example_must_no_longer_exist?(ex_id)
-        # Obviously, it exists if it was loaded for this spec run...
-        return false if @this_run.key?(ex_id)
-
+      def should_remove_from_history?(ex_id)
         spec_file = spec_file_from(ex_id)
 
-        # `this_run` includes examples that were loaded but not executed.
-        # Given that, if the spec file for this example was loaded,
-        # but the id does not still exist, it's safe to assume that
-        # the example must no longer exist.
-        return true if loaded_spec_files.include?(spec_file)
+        if example_seen_this_run?(ex_id)
+          false
+        elsif loaded_spec_files.include?(spec_file)
+          true
+        else
+          file_is_gone?(spec_file)
+        end
+      end
 
-        # The example may still exist as long as the file exists...
-        !@file_exists_cache[spec_file]
+      def example_seen_this_run?(ex_id)
+        @this_run.key?(ex_id)
+      end
+
+      def file_is_gone?(file)
+        !@file_exists_cache[file]
+      end
+
+      def resolve_conflict(new_status_hash, old_status_hash)
+        if new_status_hash.fetch(:status) == Configuration::UNKNOWN_STATUS
+          old_status_hash
+        else
+          new_status_hash
+        end
       end
 
       def loaded_spec_files

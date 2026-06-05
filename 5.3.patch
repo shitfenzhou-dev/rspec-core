@@ -1,0 +1,214 @@
+diff --git a/lib/rspec/core/example_status_persister.rb b/lib/rspec/core/example_status_persister.rb
+index d628b76e..df90e10d 100644
+--- a/lib/rspec/core/example_status_persister.rb
++++ b/lib/rspec/core/example_status_persister.rb
+@@ -83,10 +83,10 @@ module RSpec
+       end
+ 
+       def merge
+-        delete_previous_examples_that_no_longer_exist
++        remove_stale_examples
+ 
+         @this_run.merge(@from_previous_runs) do |_ex_id, new, old|
+-          new.fetch(:status) == Configuration::UNKNOWN_STATUS ? old : new
++          resolve_conflict(new, old)
+         end.values.sort_by(&method(:sort_value_from))
+       end
+ 
+@@ -99,26 +99,38 @@ module RSpec
+         end
+       end
+ 
+-      def delete_previous_examples_that_no_longer_exist
++      def remove_stale_examples
+         @from_previous_runs.delete_if do |ex_id, _|
+-          example_must_no_longer_exist?(ex_id)
++          should_remove_from_history?(ex_id)
+         end
+       end
+ 
+-      def example_must_no_longer_exist?(ex_id)
+-        # Obviously, it exists if it was loaded for this spec run...
+-        return false if @this_run.key?(ex_id)
+-
++      def should_remove_from_history?(ex_id)
+         spec_file = spec_file_from(ex_id)
+ 
+-        # `this_run` includes examples that were loaded but not executed.
+-        # Given that, if the spec file for this example was loaded,
+-        # but the id does not still exist, it's safe to assume that
+-        # the example must no longer exist.
+-        return true if loaded_spec_files.include?(spec_file)
++        if example_seen_this_run?(ex_id)
++          false
++        elsif loaded_spec_files.include?(spec_file)
++          true
++        else
++          file_is_gone?(spec_file)
++        end
++      end
++
++      def example_seen_this_run?(ex_id)
++        @this_run.key?(ex_id)
++      end
++
++      def file_is_gone?(file)
++        !@file_exists_cache[file]
++      end
+ 
+-        # The example may still exist as long as the file exists...
+-        !@file_exists_cache[spec_file]
++      def resolve_conflict(new_status_hash, old_status_hash)
++        if new_status_hash.fetch(:status) == Configuration::UNKNOWN_STATUS
++          old_status_hash
++        else
++          new_status_hash
++        end
+       end
+ 
+       def loaded_spec_files
+diff --git a/spec/rspec/core/example_status_persister_spec.rb b/spec/rspec/core/example_status_persister_spec.rb
+index 934b9b0c..a15ed49c 100644
+--- a/spec/rspec/core/example_status_persister_spec.rb
++++ b/spec/rspec/core/example_status_persister_spec.rb
+@@ -237,22 +237,133 @@ module RSpec::Core
+       expect(merged).to eq([ ex_a_1_2, ex_a_1_9, ex_a_1_10, ex_c_1_1 ])
+     end
+ 
+-    it "preserves any extra attributes include in the example hashes" do
++    it "does not mutate the input arrays or hashes" do
+       this_run = [
+-        example(existing_spec_file, "1:1", "passed", :foo => 23),
+-        example(existing_spec_file, "1:2", "failed", :bar => 12)
++        example(existing_spec_file, "1:1", "passed", :run_time => "1 second"),
++        example(existing_spec_file, "1:2", "failed", :run_time => "2 seconds")
++      ]
++      from_previous_runs = [
++        example(existing_spec_file, "1:1", "failed", :run_time => "3 seconds"),
++        example(existing_spec_file, "1:3", "passed")
++      ]
++
++      this_run_before = this_run.map { |h| h.dup }
++      from_previous_runs_before = from_previous_runs.map { |h| h.dup }
++
++      ExampleStatusMerger.merge(this_run, from_previous_runs)
++
++      expect(this_run).to eq(this_run_before)
++      expect(from_previous_runs).to eq(from_previous_runs_before)
++    end
++
++    it "preserves extra fields from the historical hash when falling back to old status via UNKNOWN_STATUS" do
++      this_run = [
++        example(existing_spec_file, "1:1", Configuration::UNKNOWN_STATUS, :run_time => "")
++      ]
++      from_previous_runs = [
++        example(existing_spec_file, "1:1", "failed", :run_time => "3 seconds", :custom_key => "old_val")
++      ]
++
++      merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
++      expect(merged).to contain_exactly(
++        a_hash_including(
++          :example_id  => "#{existing_spec_file}[1:1]",
++          :status      => "failed",
++          :run_time    => "3 seconds",
++          :custom_key  => "old_val"
++        )
++      )
++    end
++
++    it "uses the new hash entirely when this run's status is determined, preserving its extra fields" do
++      this_run = [
++        example(existing_spec_file, "1:1", "passed", :run_time => "1.5 seconds", :new_key => "new_val")
++      ]
++      from_previous_runs = [
++        example(existing_spec_file, "1:1", "failed", :run_time => "3 seconds", :old_key => "old_val")
++      ]
++
++      merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
++      expect(merged).to contain_exactly(
++        a_hash_including(
++          :example_id => "#{existing_spec_file}[1:1]",
++          :status     => "passed",
++          :run_time   => "1.5 seconds",
++          :new_key    => "new_val"
++        )
++      )
++      expect(merged.first).not_to have_key(:old_key)
++    end
++
++    it "keeps a historical example that was not loaded and whose file still exists, even alongside other examples from different files" do
++      this_run = [
++        example("other_spec.rb", "1:1", "passed")
++      ]
++      from_previous_runs = [
++        example(existing_spec_file, "1:1", "failed")
+       ]
+ 
++      merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
++      expect(merged).to contain_exactly(
++        a_hash_including(:example_id => "other_spec.rb[1:1]",   :status => "passed"),
++        a_hash_including(:example_id => "#{existing_spec_file}[1:1]", :status => "failed")
++      )
++    end
++
++    it "deletes all historical examples from a file that no longer exists on disk" do
++      this_run = []
+       from_previous_runs = [
+-        example(existing_spec_file, "1:1", "passed", :foo => -23),
+-        example(existing_spec_file, "1:2", "failed", :bar => -12)
++        example("./deleted/a_spec.rb", "1:1", "passed"),
++        example("./deleted/a_spec.rb", "1:2", "failed"),
++        example("./deleted/b_spec.rb", "1:1", "pending")
++      ]
++
++      merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
++      expect(merged).to eq([])
++    end
++
++    it "deletes historical examples whose file was loaded but whose example ids are absent, while keeping UNKNOWN_STATUS examples from the same file" do
++      this_run = [
++        example(existing_spec_file, "1:1", "passed"),
++        example(existing_spec_file, "1:3", Configuration::UNKNOWN_STATUS)
++      ]
++      from_previous_runs = [
++        example(existing_spec_file, "1:1", "failed"),
++        example(existing_spec_file, "1:2", "passed"),
++        example(existing_spec_file, "1:3", "failed")
+       ]
+ 
+       merged = merge(:this_run => this_run, :from_previous_runs => from_previous_runs)
+       expect(merged).to contain_exactly(
+-        a_hash_including(:foo => 23),
+-        a_hash_including(:bar => 12)
++        a_hash_including(:example_id => "#{existing_spec_file}[1:1]", :status => "passed"),
++        a_hash_including(:example_id => "#{existing_spec_file}[1:2]", :status => "passed"),
++        a_hash_including(:example_id => "#{existing_spec_file}[1:3]", :status => "failed")
+       )
++      expect(merged).not_to include(a_hash_including(:example_id => "#{existing_spec_file}[1:4]"))
++    end
++
++    it "produces a stable file-then-scoped_id sort where 1:9 precedes 1:10 even across multiple files" do
++      this_run = [
++        ex_b_1_10 = example("b_spec.rb", "1:10", "passed"),
++        ex_b_1_2  = example("b_spec.rb", "1:2",  "passed"),
++        ex_a_1_10 = example("a_spec.rb", "1:10", "passed"),
++        ex_a_1_9  = example("a_spec.rb", "1:9",  "passed")
++      ]
++
++      merged = merge(:this_run => this_run, :from_previous_runs => [])
++      expect(merged).to eq([ex_a_1_9, ex_a_1_10, ex_b_1_2, ex_b_1_10])
++    end
++
++    it "sorts scoped_ids with multiple colon-separated numbers numerically" do
++      this_run = [
++        ex_1_2_10 = example("f_spec.rb", "1:2:10", "passed"),
++        ex_1_2_9  = example("f_spec.rb", "1:2:9",  "passed"),
++        ex_1_10_1 = example("f_spec.rb", "1:10:1", "passed"),
++        ex_1_1_1  = example("f_spec.rb", "1:1:1",  "passed")
++      ]
++
++      merged = merge(:this_run => this_run, :from_previous_runs => [])
++      expect(merged).to eq([ex_1_1_1, ex_1_2_9, ex_1_2_10, ex_1_10_1])
+     end
+ 
+     def example(file, scoped_id, status, extras = {})
