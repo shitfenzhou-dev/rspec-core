@@ -1,0 +1,110 @@
+diff --git a/lib/rspec/core/metadata_filter.rb b/lib/rspec/core/metadata_filter.rb
+index 2e63baf9..da2101f7 100644
+--- a/lib/rspec/core/metadata_filter.rb
++++ b/lib/rspec/core/metadata_filter.rb
+@@ -234,19 +234,41 @@ module RSpec
+ 
+         def proc_keys_from(metadata)
+           metadata.each_with_object([]) do |(key, value), to_return|
+-            to_return << key if Proc === value
++            to_return << key if contains_proc?(value)
++          end
++        end
++
++        def contains_proc?(value)
++          case value
++          when Proc
++            true
++          when Hash
++            value.any? { |_, v| contains_proc?(v) }
++          else
++            false
+           end
+         end
+ 
+         unless [].respond_to?(:each_with_object) # For 1.8.7
+           # :nocov:
+-          undef proc_keys_from
++          undef proc_keys_from, :contains_proc?
+           def proc_keys_from(metadata)
+             metadata.inject([]) do |to_return, (key, value)|
+-              to_return << key if Proc === value
++              to_return << key if contains_proc?(value)
+               to_return
+             end
+           end
++
++          def contains_proc?(value)
++            case value
++            when Proc
++              true
++            when Hash
++              value.any? { |_, v| contains_proc?(v) }
++            else
++              false
++            end
++          end
+           # :nocov:
+         end
+       end
+diff --git a/spec/rspec/core/filterable_item_repository_spec.rb b/spec/rspec/core/filterable_item_repository_spec.rb
+index 99a526f9..a78a4e06 100644
+--- a/spec/rspec/core/filterable_item_repository_spec.rb
++++ b/spec/rspec/core/filterable_item_repository_spec.rb
+@@ -98,6 +98,19 @@ module RSpec
+                 end
+               end
+ 
++              context "with nested hash containing proc values" do
++                before do
++                  add_item item_4, { :db => { :enabled => flip_proc } }
++                end
++
++                it 'evaluates the nested proc each time since the logic can return a different value each time' do
++                  expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
++                  expect(repo.items_for(:db => { :enabled => nil })).to eq([])
++                  expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
++                  expect(repo.items_for(:db => { :enabled => nil })).to eq([])
++                end
++              end
++
+               context "when initialized with the `:any?` predicate" do
+                 let(:repo) { FilterableItemRepository::QueryOptimized.new(:any?) }
+ 
+@@ -222,6 +235,36 @@ module RSpec
+               end
+             end
+ 
++            context "when there are some nested hash with proc keys" do
++              before do
++                add_item item_4, { :db => { :enabled => flip_proc } }
++              end
++
++              it 'still performs memoization for metadata hashes that lack those keys' do
++                call_counts = track_metadata_filter_apply_calls
++
++                expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
++                expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
++
++                expect(call_counts[:slow => true]).to eq(1)
++              end
++            end
++
++            context "when there is a nested hash without proc keys" do
++              before do
++                add_item item_4, { :db => { :enabled => true } }
++              end
++
++              it 'still performs memoization for those metadata hashes' do
++                call_counts = track_metadata_filter_apply_calls
++
++                expect(repo.items_for(:db => { :enabled => true })).to contain_exactly(item_2, item_4)
++                expect(repo.items_for(:db => { :enabled => true })).to contain_exactly(item_2, item_4)
++
++                expect(call_counts[:db => { :enabled => true }]).to eq(1)
++              end
++            end
++
+             def track_metadata_filter_apply_calls
+               Hash.new(0).tap do |call_counts|
+                 allow(MetadataFilter).to receive(:apply?).and_wrap_original do |original, predicate, item_meta, request_meta|

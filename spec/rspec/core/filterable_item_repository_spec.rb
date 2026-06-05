@@ -98,6 +98,19 @@ module RSpec
                 end
               end
 
+              context "with nested hash containing proc values" do
+                before do
+                  add_item item_4, { :db => { :enabled => flip_proc } }
+                end
+
+                it 'evaluates the nested proc each time since the logic can return a different value each time' do
+                  expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
+                  expect(repo.items_for(:db => { :enabled => nil })).to eq([])
+                  expect(repo.items_for(:db => { :enabled => nil })).to contain_exactly(item_4)
+                  expect(repo.items_for(:db => { :enabled => nil })).to eq([])
+                end
+              end
+
               context "when initialized with the `:any?` predicate" do
                 let(:repo) { FilterableItemRepository::QueryOptimized.new(:any?) }
 
@@ -219,6 +232,36 @@ module RSpec
                 expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
 
                 expect(call_counts[:slow => true]).to eq(1)
+              end
+            end
+
+            context "when there are some nested hash with proc keys" do
+              before do
+                add_item item_4, { :db => { :enabled => flip_proc } }
+              end
+
+              it 'still performs memoization for metadata hashes that lack those keys' do
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
+                expect(repo.items_for(:slow => true, :other => "foo")).to contain_exactly(item_2)
+
+                expect(call_counts[:slow => true]).to eq(1)
+              end
+            end
+
+            context "when there is a nested hash without proc keys" do
+              before do
+                add_item item_4, { :db => { :enabled => true } }
+              end
+
+              it 'still performs memoization for those metadata hashes' do
+                call_counts = track_metadata_filter_apply_calls
+
+                expect(repo.items_for(:db => { :enabled => true })).to contain_exactly(item_2, item_4)
+                expect(repo.items_for(:db => { :enabled => true })).to contain_exactly(item_2, item_4)
+
+                expect(call_counts[:db => { :enabled => true }]).to eq(1)
               end
             end
 
