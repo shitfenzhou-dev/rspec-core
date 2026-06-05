@@ -199,6 +199,22 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
       end
     end
 
+    it "does not merge --exclude-pattern across configuration sources; later source overrides" do
+      with_env_vars 'SPEC_OPTS' => "--exclude-pattern spec/**/env*_spec.rb" do
+        opts = config_options_object(*%w[--exclude-pattern spec/**/cli*_spec.rb])
+        expect(config).to receive(:force).with({:exclude_pattern => 'spec/**/env*_spec.rb'})
+        opts.configure(config)
+      end
+    end
+
+    it "does not merge --pattern across configuration sources; later source overrides" do
+      with_env_vars 'SPEC_OPTS' => "--pattern spec/**/env*_spec.rb" do
+        opts = config_options_object(*%w[--pattern spec/**/cli*_spec.rb])
+        expect(config).to receive(:force).with({:pattern => 'spec/**/env*_spec.rb'})
+        opts.configure(config)
+      end
+    end
+
     %w[ --only-failures --next-failure -n].each do |option|
       describe option do
         it "changes `config.only_failures?` to true" do

@@ -1,0 +1,84 @@
+diff --git a/lib/rspec/core/option_parser.rb b/lib/rspec/core/option_parser.rb
+index e239e87a..b8fb734c 100644
+--- a/lib/rspec/core/option_parser.rb
++++ b/lib/rspec/core/option_parser.rb
+@@ -229,7 +229,11 @@ FILTERING
+ 
+         parser.on('--exclude-pattern PATTERN',
+                   'Load files except those matching pattern. Opposite effect of --pattern.') do |o|
+-          options[:exclude_pattern] = o
++          if options[:exclude_pattern]
++            options[:exclude_pattern] += ',' + o
++          else
++            options[:exclude_pattern] = o
++          end
+         end
+ 
+         parser.on('-e', '--example STRING', "Run examples whose full nested names include STRING (may be",
+diff --git a/spec/rspec/core/configuration_options_spec.rb b/spec/rspec/core/configuration_options_spec.rb
+index 4bf93974..f40b1983 100644
+--- a/spec/rspec/core/configuration_options_spec.rb
++++ b/spec/rspec/core/configuration_options_spec.rb
+@@ -199,6 +199,22 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
+       end
+     end
+ 
++    it "does not merge --exclude-pattern across configuration sources; later source overrides" do
++      with_env_vars 'SPEC_OPTS' => "--exclude-pattern spec/**/env*_spec.rb" do
++        opts = config_options_object(*%w[--exclude-pattern spec/**/cli*_spec.rb])
++        expect(config).to receive(:force).with({:exclude_pattern => 'spec/**/env*_spec.rb'})
++        opts.configure(config)
++      end
++    end
++
++    it "does not merge --pattern across configuration sources; later source overrides" do
++      with_env_vars 'SPEC_OPTS' => "--pattern spec/**/env*_spec.rb" do
++        opts = config_options_object(*%w[--pattern spec/**/cli*_spec.rb])
++        expect(config).to receive(:force).with({:pattern => 'spec/**/env*_spec.rb'})
++        opts.configure(config)
++      end
++    end
++
+     %w[ --only-failures --next-failure -n].each do |option|
+       describe option do
+         it "changes `config.only_failures?` to true" do
+diff --git a/spec/rspec/core/option_parser_spec.rb b/spec/rspec/core/option_parser_spec.rb
+index af3edf4e..9580dda6 100644
+--- a/spec/rspec/core/option_parser_spec.rb
++++ b/spec/rspec/core/option_parser_spec.rb
+@@ -240,6 +240,35 @@ module RSpec::Core
+       end
+     end
+ 
++    describe '--exclude-pattern' do
++      it 'sets the exclude pattern' do
++        options = Parser.parse(['--exclude-pattern', 'spec/**/slow*_spec.rb'])
++        expect(options[:exclude_pattern]).to eq('spec/**/slow*_spec.rb')
++      end
++
++      it 'combines multiple exclude patterns with comma' do
++        options = Parser.parse(['--exclude-pattern', 'spec/**/slow*_spec.rb', '--exclude-pattern', 'spec/**/flaky*_spec.rb'])
++        expect(options[:exclude_pattern]).to eq('spec/**/slow*_spec.rb,spec/**/flaky*_spec.rb')
++      end
++
++      it 'maintains its own value independently from --pattern' do
++        options = Parser.parse(['--pattern', 'spec/**/*_spec.rb', '--exclude-pattern', 'spec/**/slow*_spec.rb'])
++        expect(options[:pattern]).to eq('spec/**/*_spec.rb')
++        expect(options[:exclude_pattern]).to eq('spec/**/slow*_spec.rb')
++      end
++
++      it 'merges multiple --exclude-pattern independently from multiple --pattern' do
++        options = Parser.parse([
++          '--pattern', 'spec/**/*_spec.rb',
++          '--pattern', 'tests/**/*_spec.rb',
++          '--exclude-pattern', 'spec/**/slow*_spec.rb',
++          '--exclude-pattern', 'spec/**/flaky*_spec.rb'
++        ])
++        expect(options[:pattern]).to eq('spec/**/*_spec.rb,tests/**/*_spec.rb')
++        expect(options[:exclude_pattern]).to eq('spec/**/slow*_spec.rb,spec/**/flaky*_spec.rb')
++      end
++    end
++
+     %w[--tag -t].each do |option|
+       describe option do
+         context "without ~" do
