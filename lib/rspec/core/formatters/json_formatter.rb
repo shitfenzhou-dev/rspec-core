@@ -1,4 +1,5 @@
 RSpec::Support.require_rspec_core "formatters/base_formatter"
+RSpec::Support.require_rspec_core "shell_escape"
 require 'json'
 
 module RSpec
@@ -6,6 +7,8 @@ module RSpec
     module Formatters
       # @private
       class JsonFormatter < BaseFormatter
+        include RSpec::Core::ShellEscape
+
         Formatters.register self, :message, :dump_summary, :dump_profile, :stop, :seed, :close
 
         attr_reader :output_hash
@@ -33,8 +36,11 @@ module RSpec
         end
 
         def stop(group_notification)
-          @output_hash[:examples] = group_notification.notifications.map do |notification|
-            format_example(notification.example).tap do |hash|
+          notifications = group_notification.notifications
+          duplicate_rerun_locations = duplicate_rerun_locations_for(notifications.map(&:example))
+
+          @output_hash[:examples] = notifications.map do |notification|
+            format_example(notification.example, duplicate_rerun_locations).tap do |hash|
               e = notification.example.exception
 
               if e
@@ -66,8 +72,10 @@ module RSpec
         # @api private
         def dump_profile_slowest_examples(profile)
           @output_hash[:profile] = {}
+          duplicate_rerun_locations = duplicate_rerun_locations_for(profile.examples)
+
           @output_hash[:profile][:examples] = profile.slowest_examples.map do |example|
-            format_example(example).tap do |hash|
+            format_example(example, duplicate_rerun_locations).tap do |hash|
               hash[:run_time] = example.execution_result.run_time
             end
           end
@@ -85,7 +93,7 @@ module RSpec
 
       private
 
-        def format_example(example)
+        def format_example(example, duplicate_rerun_locations = {})
           {
             :id => example.id,
             :description => example.description,
@@ -93,9 +101,24 @@ module RSpec
             :status => example.execution_result.status.to_s,
             :file_path => example.metadata[:file_path],
             :line_number  => example.metadata[:line_number],
+            :rerun_argument => rerun_argument_for(example, duplicate_rerun_locations),
             :run_time => example.execution_result.run_time,
             :pending_message => example.execution_result.pending_message,
           }
+        end
+
+        def rerun_argument_for(example, duplicate_rerun_locations)
+          location = example.location_rerun_argument
+
+          return location unless duplicate_rerun_locations.key?(location)
+          return location if RSpec.configuration.force_line_number_for_spec_rerun
+          conditionally_quote(example.id)
+        end
+
+        def duplicate_rerun_locations_for(examples)
+          examples.each_with_object(Hash.new(0)) do |example, counts|
+            counts[example.location_rerun_argument] += 1
+          end.select { |_, count| count > 1 }
         end
       end
     end

@@ -1,0 +1,223 @@
+diff --git a/lib/rspec/core/formatters/json_formatter.rb b/lib/rspec/core/formatters/json_formatter.rb
+index 7c6fde82..4e2e63d1 100644
+--- a/lib/rspec/core/formatters/json_formatter.rb
++++ b/lib/rspec/core/formatters/json_formatter.rb
+@@ -1,4 +1,5 @@
+ RSpec::Support.require_rspec_core "formatters/base_formatter"
++RSpec::Support.require_rspec_core "shell_escape"
+ require 'json'
+ 
+ module RSpec
+@@ -6,6 +7,8 @@ module RSpec
+     module Formatters
+       # @private
+       class JsonFormatter < BaseFormatter
++        include RSpec::Core::ShellEscape
++
+         Formatters.register self, :message, :dump_summary, :dump_profile, :stop, :seed, :close
+ 
+         attr_reader :output_hash
+@@ -33,8 +36,11 @@ module RSpec
+         end
+ 
+         def stop(group_notification)
+-          @output_hash[:examples] = group_notification.notifications.map do |notification|
+-            format_example(notification.example).tap do |hash|
++          notifications = group_notification.notifications
++          duplicate_rerun_locations = duplicate_rerun_locations_for(notifications.map(&:example))
++
++          @output_hash[:examples] = notifications.map do |notification|
++            format_example(notification.example, duplicate_rerun_locations).tap do |hash|
+               e = notification.example.exception
+ 
+               if e
+@@ -66,8 +72,10 @@ module RSpec
+         # @api private
+         def dump_profile_slowest_examples(profile)
+           @output_hash[:profile] = {}
++          duplicate_rerun_locations = duplicate_rerun_locations_for(profile.examples)
++
+           @output_hash[:profile][:examples] = profile.slowest_examples.map do |example|
+-            format_example(example).tap do |hash|
++            format_example(example, duplicate_rerun_locations).tap do |hash|
+               hash[:run_time] = example.execution_result.run_time
+             end
+           end
+@@ -85,7 +93,7 @@ module RSpec
+ 
+       private
+ 
+-        def format_example(example)
++        def format_example(example, duplicate_rerun_locations = {})
+           {
+             :id => example.id,
+             :description => example.description,
+@@ -93,10 +101,25 @@ module RSpec
+             :status => example.execution_result.status.to_s,
+             :file_path => example.metadata[:file_path],
+             :line_number  => example.metadata[:line_number],
++            :rerun_argument => rerun_argument_for(example, duplicate_rerun_locations),
+             :run_time => example.execution_result.run_time,
+             :pending_message => example.execution_result.pending_message,
+           }
+         end
++
++        def rerun_argument_for(example, duplicate_rerun_locations)
++          location = example.location_rerun_argument
++
++          return location unless duplicate_rerun_locations.key?(location)
++          return location if RSpec.configuration.force_line_number_for_spec_rerun
++          conditionally_quote(example.id)
++        end
++
++        def duplicate_rerun_locations_for(examples)
++          examples.each_with_object(Hash.new(0)) do |example, counts|
++            counts[example.location_rerun_argument] += 1
++          end.select { |_, count| count > 1 }
++        end
+       end
+     end
+   end
+diff --git a/spec/rspec/core/formatters/json_formatter_spec.rb b/spec/rspec/core/formatters/json_formatter_spec.rb
+index 2f54d6c7..cc38a613 100644
+--- a/spec/rspec/core/formatters/json_formatter_spec.rb
++++ b/spec/rspec/core/formatters/json_formatter_spec.rb
+@@ -13,6 +13,36 @@ require 'rspec/core/reporter'
+ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+   include FormatterSupport
+ 
++  def loaded_spec_files
++    RSpec::Core::Set.new([File.expand_path(__FILE__)])
++  end
++
++  def run_examples(group)
++    allow(RSpec.configuration).to receive(:loaded_spec_files).and_return(loaded_spec_files)
++
++    reporter.report(group.examples.count) do |r|
++      group.run(r)
++    end
++
++    formatter.output_hash[:examples]
++  end
++
++  def duplicate_location_group
++    RSpec.describe("duplicate rerun arguments") do
++      shared_examples "shared example with duplicate location" do
++        it("uses the shared example location") { }
++      end
++
++      context "first context" do
++        include_examples "shared example with duplicate location"
++      end
++
++      context "second context" do
++        include_examples "shared example with duplicate location"
++      end
++    end
++  end
++
+   it "can be loaded via `--format json`" do
+     output = run_example_specs_with_formatter("json", :normalize_output => false, :seed => 42)
+     parsed = JSON.parse(output)
+@@ -32,6 +62,8 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+ 
+     now = Time.now
+     allow(Time).to receive(:now).and_return(now)
++    allow(RSpec.configuration).to receive(:loaded_spec_files).and_return(RSpec::Core::Set.new([File.expand_path(__FILE__)]))
++
+     reporter.report(2) do |r|
+       group.run(r)
+     end
+@@ -51,6 +83,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :status => "passed",
+           :file_path => this_file,
+           :line_number => succeeding_line,
++          :rerun_argument => its[0].location_rerun_argument,
+           :run_time => formatter.output_hash[:examples][0][:run_time],
+           :pending_message => nil,
+         },
+@@ -61,6 +94,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :status => "failed",
+           :file_path => this_file,
+           :line_number => failing_line,
++          :rerun_argument => its[1].location_rerun_argument,
+           :run_time => formatter.output_hash[:examples][1][:run_time],
+           :pending_message => nil,
+           :exception => {
+@@ -76,6 +110,7 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+           :status => "pending",
+           :file_path => this_file,
+           :line_number => pending_line,
++          :rerun_argument => its[2].location_rerun_argument,
+           :run_time => formatter.output_hash[:examples][2][:run_time],
+           :pending_message => "world peace",
+         },
+@@ -147,6 +182,39 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+       send_notification :stop, stop_notification
+       expect(formatter.output_hash[:examples]).not_to be_nil
+     end
++
++    it "includes rerun_argument for passed, failed and pending examples" do
++      group = RSpec.describe("one apiece") do
++        it("passes") { expect(1).to eq(1) }
++        it("fails") { fail "eek" }
++        it("pends") { pending "world peace"; fail "eek" }
++      end
++
++      examples = run_examples(group)
++
++      expect(examples.map { |example| example[:status] }).to eq(%w[passed failed pending])
++      expect(examples.map { |example| example[:rerun_argument] }).to eq(group.examples.map(&:location_rerun_argument))
++    end
++
++    context "when multiple examples share the same location rerun argument" do
++      it "uses the example id when force_line_number_for_spec_rerun is false" do
++        group = duplicate_location_group
++
++        examples = run_examples(group)
++
++        expect(group.examples.map(&:location_rerun_argument).uniq.count).to eq(1)
++        expect(examples.map { |example| example[:rerun_argument] }).to eq(group.examples.map(&:id))
++      end
++
++      it "uses the location rerun argument when force_line_number_for_spec_rerun is true" do
++        allow(RSpec.configuration).to receive(:force_line_number_for_spec_rerun).and_return(true)
++        group = duplicate_location_group
++
++        examples = run_examples(group)
++
++        expect(examples.map { |example| example[:rerun_argument] }).to eq(group.examples.map(&:location_rerun_argument))
++      end
++    end
+   end
+ 
+   describe "#seed" do
+@@ -267,5 +335,28 @@ RSpec.describe RSpec::Core::Formatters::JsonFormatter do
+         expect(formatter.output_hash[:profile][:groups].first[:description]).to eq("slow group")
+       end
+     end
++
++    context "when slowest examples share the same location rerun argument" do
++      it "uses the same rerun_argument rules as the main examples list" do
++        group = duplicate_location_group
++        allow(RSpec.configuration).to receive(:loaded_spec_files).and_return(loaded_spec_files)
++
++        group.run(reporter)
++        send_notification :dump_profile, profile_notification(0.5, group.examples, 10)
++
++        expect(formatter.output_hash[:profile][:examples].map { |example| example[:rerun_argument] }).to eq(group.examples.map(&:id))
++      end
++
++      it "keeps using the location rerun argument when force_line_number_for_spec_rerun is true" do
++        allow(RSpec.configuration).to receive(:force_line_number_for_spec_rerun).and_return(true)
++        group = duplicate_location_group
++        allow(RSpec.configuration).to receive(:loaded_spec_files).and_return(loaded_spec_files)
++
++        group.run(reporter)
++        send_notification :dump_profile, profile_notification(0.5, group.examples, 10)
++
++        expect(formatter.output_hash[:profile][:examples].map { |example| example[:rerun_argument] }).to eq(group.examples.map(&:location_rerun_argument))
++      end
++    end
+   end
+ end
