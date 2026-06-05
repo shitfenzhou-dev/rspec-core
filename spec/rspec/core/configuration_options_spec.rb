@@ -199,6 +199,22 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
       end
     end
 
+    it "overrides --pattern when specified by multiple configuration sources" do
+      with_env_vars 'SPEC_OPTS' => "--pattern env_pattern" do
+        opts = config_options_object(*%w[--pattern opts_pattern])
+        expect(config).to receive(:force).with({:pattern => "env_pattern"}).ordered
+        opts.configure(config)
+      end
+    end
+
+    it "overrides --exclude-pattern when specified by multiple configuration sources" do
+      with_env_vars 'SPEC_OPTS' => "--exclude-pattern env_pattern" do
+        opts = config_options_object(*%w[--exclude-pattern opts_pattern])
+        expect(config).to receive(:force).with({:exclude_pattern => "env_pattern"}).ordered
+        opts.configure(config)
+      end
+    end
+
     %w[ --only-failures --next-failure -n].each do |option|
       describe option do
         it "changes `config.only_failures?` to true" do
