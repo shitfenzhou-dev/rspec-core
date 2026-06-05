@@ -497,6 +497,20 @@ RSpec.describe RSpec::Core::ConfigurationOptions, :isolated_directory => true, :
       expect(options[:order]).to be_nil
     end
 
+    it "handles malformed numeric tags in .rspec without throwing exception" do
+      create_fixture_file("./.rspec", "--tag foo:3x146")
+
+      options = parse_options()
+      expect(options[:inclusion_filter]).to eq(:foo => "3x146")
+    end
+
+    it "handles malformed numeric tags in SPEC_OPTS without throwing exception" do
+      with_env_vars 'SPEC_OPTS' => "--tag foo:3x146" do
+        options = parse_options()
+        expect(options[:inclusion_filter]).to eq(:foo => "3x146")
+      end
+    end
+
     it "does not read ~/.rspec if $XDG_CONFIG_HOME/rspec/options is present" do
       create_fixture_file("~/.rspec", "--force-color")
       create_fixture_file("~/.config/rspec/options", "--order defined")
