@@ -99,8 +99,53 @@ module RSpec
         def original_cli_args_without_locations
           @original_cli_args_without_locations ||= begin
             files_or_dirs = parsed_original_cli_options.fetch(:files_or_directories_to_run)
-            @original_cli_args - files_or_dirs
+            args = @original_cli_args.dup
+            i = 0
+            skip_next = false
+
+            while i < args.length
+              if skip_next
+                skip_next = false
+                i += 1
+                next
+              end
+
+              arg = args[i]
+
+              if arg.start_with?('-')
+                # 检测带参数的选项
+                if option_with_argument?(arg)
+                  if arg.include?('=')
+                    # --option=value 格式，整个 arg 保留
+                    i += 1
+                  else
+                    # --option value 格式，跳过下一个 arg
+                    skip_next = true
+                    i += 1
+                  end
+                else
+                  # 不带参数的选项
+                  i += 1
+                end
+              else
+                # 检查是否是要移除的 location
+                if files_or_dirs.include?(arg)
+                  # 只移除一次
+                  files_or_dirs.delete(arg)
+                  args.delete_at(i)
+                else
+                  i += 1
+                end
+              end
+            end
+
+            args
           end
+        end
+
+        def option_with_argument?(arg)
+          # 列出所有带参数的选项
+          arg =~ /^-(I|r|O|f|o|e|E|t|-require|--options|--order|--seed|--bisect|--fail-fast|--failure-exit-code|--error-exit-code|--drb-port|--format|--out|--deprecation-out|--profile|--pattern|--exclude-pattern|--example|--example-matches|--tag|--default-path)/
         end
 
         def parsed_original_cli_options

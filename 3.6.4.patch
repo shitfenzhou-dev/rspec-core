@@ -1,0 +1,121 @@
+diff --git a/lib/rspec/core/bisect/shell_command.rb b/lib/rspec/core/bisect/shell_command.rb
+index b68f8b16..fe0255fc 100644
+--- a/lib/rspec/core/bisect/shell_command.rb
++++ b/lib/rspec/core/bisect/shell_command.rb
+@@ -99,10 +99,55 @@ module RSpec
+         def original_cli_args_without_locations
+           @original_cli_args_without_locations ||= begin
+             files_or_dirs = parsed_original_cli_options.fetch(:files_or_directories_to_run)
+-            @original_cli_args - files_or_dirs
++            args = @original_cli_args.dup
++            i = 0
++            skip_next = false
++
++            while i < args.length
++              if skip_next
++                skip_next = false
++                i += 1
++                next
++              end
++
++              arg = args[i]
++
++              if arg.start_with?('-')
++                # 检测带参数的选项
++                if option_with_argument?(arg)
++                  if arg.include?('=')
++                    # --option=value 格式，整个 arg 保留
++                    i += 1
++                  else
++                    # --option value 格式，跳过下一个 arg
++                    skip_next = true
++                    i += 1
++                  end
++                else
++                  # 不带参数的选项
++                  i += 1
++                end
++              else
++                # 检查是否是要移除的 location
++                if files_or_dirs.include?(arg)
++                  # 只移除一次
++                  files_or_dirs.delete(arg)
++                  args.delete_at(i)
++                else
++                  i += 1
++                end
++              end
++            end
++
++            args
+           end
+         end
+ 
++        def option_with_argument?(arg)
++          # 列出所有带参数的选项
++          arg =~ /^-(I|r|O|f|o|e|E|t|-require|--options|--order|--seed|--bisect|--fail-fast|--failure-exit-code|--error-exit-code|--drb-port|--format|--out|--deprecation-out|--profile|--pattern|--exclude-pattern|--example|--example-matches|--tag|--default-path)/
++        end
++
+         def parsed_original_cli_options
+           @parsed_original_cli_options ||= Parser.parse(@original_cli_args)
+         end
+diff --git a/spec/rspec/core/bisect/shell_command_spec.rb b/spec/rspec/core/bisect/shell_command_spec.rb
+index b3a0c7be..6371efb4 100644
+--- a/spec/rspec/core/bisect/shell_command_spec.rb
++++ b/spec/rspec/core/bisect/shell_command_spec.rb
+@@ -209,6 +209,55 @@ module RSpec::Core
+       end
+     end
+ 
++    describe "with options whose values match locations" do
++      context "when --default-path value matches a location" do
++        let(:original_cli_args) { %w[ spec/unit --default-path spec/unit --bisect ] }
++
++        it "keeps --default-path option in command_for" do
++          cmd = shell_command.command_for(%w[ spec/1.rb ], server)
++          expect(cmd).to include("--default-path spec/unit")
++        end
++
++        it "keeps --default-path option in repro_command_from" do
++          cmd = shell_command.repro_command_from(%w[ spec/1.rb[1:1] ])
++          expect(cmd).to include("--default-path spec/unit")
++        end
++      end
++
++      context "when multiple same locations are present" do
++        let(:original_cli_args) { %w[ spec/unit spec/unit --order defined ] }
++
++        it "removes only location args, keeping other same values that are options" do
++          # 虽然这个例子没有 option 值与 location 相同，但验证了多个相同 location 被正确处理
++          cmd = shell_command.repro_command_from(%w[ spec/1.rb[1:1] ])
++          expect(cmd).to include("--order defined").and exclude("spec/unit")
++        end
++      end
++
++      context "when option value matches location and uses = format" do
++        let(:original_cli_args) { %w[ spec/unit --default-path=spec/unit --bisect ] }
++
++        it "keeps --default-path=spec/unit in command_for" do
++          cmd = shell_command.command_for(%w[ spec/1.rb ], server)
++          expect(cmd).to include("--default-path=spec/unit")
++        end
++
++        it "keeps --default-path=spec/unit in repro_command_from" do
++          cmd = shell_command.repro_command_from(%w[ spec/1.rb[1:1] ])
++          expect(cmd).to include("--default-path=spec/unit")
++        end
++      end
++
++      context "when multiple options have values matching locations" do
++        let(:original_cli_args) { %w[ spec/a spec/b --default-path spec/a --pattern spec/b --bisect ] }
++
++        it "keeps all options and their values" do
++          cmd = shell_command.repro_command_from(%w[ spec/c.rb[1:1] ])
++          expect(cmd).to include("--default-path spec/a").and include("--pattern spec/b")
++        end
++      end
++    end
++
+     describe "#bisect_environment_hash" do
+       let(:original_cli_args) { %w[] }
+ 

@@ -209,6 +209,55 @@ module RSpec::Core
       end
     end
 
+    describe "with options whose values match locations" do
+      context "when --default-path value matches a location" do
+        let(:original_cli_args) { %w[ spec/unit --default-path spec/unit --bisect ] }
+
+        it "keeps --default-path option in command_for" do
+          cmd = shell_command.command_for(%w[ spec/1.rb ], server)
+          expect(cmd).to include("--default-path spec/unit")
+        end
+
+        it "keeps --default-path option in repro_command_from" do
+          cmd = shell_command.repro_command_from(%w[ spec/1.rb[1:1] ])
+          expect(cmd).to include("--default-path spec/unit")
+        end
+      end
+
+      context "when multiple same locations are present" do
+        let(:original_cli_args) { %w[ spec/unit spec/unit --order defined ] }
+
+        it "removes only location args, keeping other same values that are options" do
+          # 虽然这个例子没有 option 值与 location 相同，但验证了多个相同 location 被正确处理
+          cmd = shell_command.repro_command_from(%w[ spec/1.rb[1:1] ])
+          expect(cmd).to include("--order defined").and exclude("spec/unit")
+        end
+      end
+
+      context "when option value matches location and uses = format" do
+        let(:original_cli_args) { %w[ spec/unit --default-path=spec/unit --bisect ] }
+
+        it "keeps --default-path=spec/unit in command_for" do
+          cmd = shell_command.command_for(%w[ spec/1.rb ], server)
+          expect(cmd).to include("--default-path=spec/unit")
+        end
+
+        it "keeps --default-path=spec/unit in repro_command_from" do
+          cmd = shell_command.repro_command_from(%w[ spec/1.rb[1:1] ])
+          expect(cmd).to include("--default-path=spec/unit")
+        end
+      end
+
+      context "when multiple options have values matching locations" do
+        let(:original_cli_args) { %w[ spec/a spec/b --default-path spec/a --pattern spec/b --bisect ] }
+
+        it "keeps all options and their values" do
+          cmd = shell_command.repro_command_from(%w[ spec/c.rb[1:1] ])
+          expect(cmd).to include("--default-path spec/a").and include("--pattern spec/b")
+        end
+      end
+    end
+
     describe "#bisect_environment_hash" do
       let(:original_cli_args) { %w[] }
 
