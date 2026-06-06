@@ -57,6 +57,33 @@ module RSpec::Core
         end
       end
 
+      it 'preserves --default-path value when it matches a location path' do
+        original_cli_args.concat %w[ --default-path spec/unit ]
+        cmd = command_for(%w[ spec/1.rb ])
+        expect(cmd).to include('--default-path spec/unit')
+      end
+
+      it 'does not remove option values that happen to match location strings' do
+        original_cli_args.concat %w[ --default-path spec/unit ]
+        cmd = command_for(%w[ spec/1.rb ])
+        expect(cmd.scan('spec/unit').count).to eq(1)
+      end
+
+      it 'removes duplicate location paths without affecting option values with the same string' do
+        original_cli_args.concat %w[ spec/unit --default-path spec/unit ]
+        cmd = command_for(%w[ spec/1.rb ])
+        expect(cmd).to include('--default-path spec/unit')
+        expect(cmd).to exclude('spec/unit ')
+      end
+
+      it 'only removes the exact number of duplicated location args' do
+        original_cli_args.replace %w[ spec/unit spec/unit --default-path spec/unit ]
+        cmd = command_for(%w[ spec/1.rb ])
+        expect(cmd).to include('--default-path spec/unit')
+        expect(cmd).to exclude('spec/unit ')
+        expect(cmd.scan('spec/unit').count).to eq(1)
+      end
+
       it 'uses the bisect formatter' do
         cmd = command_for([])
         expect(cmd).to include("--format bisect")
@@ -198,6 +225,21 @@ module RSpec::Core
         with_env_vars 'SHELL' => '/usr/local/bin/zsh' do
           expect(repro_command_from(%w[ ./foo.rb[1:1] ])).to include("'./foo.rb[1:1]'")
         end
+      end
+
+      it 'preserves --default-path value when it matches a location path' do
+        original_cli_args.concat %w[ --default-path spec/unit ]
+        cmd = repro_command_from(%w[ ./spec/unit/1_spec.rb[1:1] ])
+        expect(cmd).to include('--default-path spec/unit')
+        expect(cmd).to exclude('spec/unit ')
+      end
+
+      it 'retains option value that matches original location string' do
+        original_cli_args.replace %w[ spec/unit --default-path spec/unit --seed 1234 ]
+        cmd = repro_command_from(%w[ ./spec/unit/1_spec.rb[1:1] ])
+        expect(cmd).to include('--default-path spec/unit')
+        expect(cmd).to include('--seed 1234')
+        expect(cmd).to exclude('spec/unit ')
       end
     end
 

@@ -99,7 +99,15 @@ module RSpec
         def original_cli_args_without_locations
           @original_cli_args_without_locations ||= begin
             files_or_dirs = parsed_original_cli_options.fetch(:files_or_directories_to_run)
-            @original_cli_args - files_or_dirs
+            remaining_counts = files_or_dirs.each_with_object(Hash.new(0)) { |f, h| h[f] += 1 }
+            @original_cli_args.reject do |arg|
+              if remaining_counts[arg] > 0
+                remaining_counts[arg] -= 1
+                true
+              else
+                false
+              end
+            end
           end
         end
 
