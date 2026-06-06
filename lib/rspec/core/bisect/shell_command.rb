@@ -98,8 +98,48 @@ module RSpec
 
         def original_cli_args_without_locations
           @original_cli_args_without_locations ||= begin
-            files_or_dirs = parsed_original_cli_options.fetch(:files_or_directories_to_run)
-            @original_cli_args - files_or_dirs
+            locations_to_remove = parsed_original_cli_options.fetch(:files_or_directories_to_run).dup
+
+            result = []
+            skip_next = false
+            @original_cli_args.each do |arg|
+              if skip_next
+                skip_next = false
+                # This arg is an option value, always keep it
+                result << arg
+                next
+              end
+
+              if arg.start_with?('-')
+                result << arg
+                skip_next = option_takes_value?(arg)
+              else
+                # Positional argument: remove it if it matches a location (once per match)
+                if locations_to_remove.include?(arg)
+                  locations_to_remove.delete(arg)
+                else
+                  result << arg
+                end
+              end
+            end
+
+            result
+          end
+        end
+
+        def option_takes_value?(arg)
+          return false if arg.include?('=')
+
+          case arg
+          when /^-([A-Za-z])$/
+            # Short option like -I, -r, -O, -f, -o, -P, -e, -E, -t
+            %w[I r O f o P e E t].include?($1)
+          when /^--(?:order|failure-exit-code|error-exit-code|drb-port|format|out|deprecation-out|pattern|exclude-pattern|example|example-matches|tag|default-path)$/
+            true
+          when /^--(?:seed)$/
+            true
+          else
+            false
           end
         end
 

@@ -209,6 +209,74 @@ module RSpec::Core
       end
     end
 
+    describe "option value collision with location" do
+      let(:original_cli_args) { %w[ spec/unit --default-path spec/unit --bisect ] }
+
+      describe "#command_for" do
+        it "retains --default-path with its value even when it matches a location" do
+          cmd = shell_command.command_for(%w[ spec/unit/foo_spec.rb[1:1] ], server)
+          expect(cmd).to include("--default-path spec/unit")
+          expect(cmd).to include("spec/unit/foo_spec.rb[1:1]")
+          expect(cmd).not_to match(/[^-]spec\/unit[^\/]/)
+        end
+      end
+
+      describe "#repro_command_from" do
+        it "retains --default-path with its value but excludes the original location" do
+          cmd = shell_command.repro_command_from(%w[ ./spec/unit/foo_spec.rb[1:1] ])
+          expect(cmd).to include("--default-path spec/unit")
+          expect(cmd).not_to include("spec/unit ")
+        end
+      end
+    end
+
+    describe "duplicate location strings" do
+      let(:original_cli_args) { %w[ spec/unit spec/unit --seed 1234 --bisect ] }
+
+      describe "#command_for" do
+        it "removes all duplicate locations" do
+          cmd = shell_command.command_for(%w[ spec/unit/foo_spec.rb[1:1] ], server)
+          expect(cmd).to include("--seed 1234")
+          expect(cmd).not_to include("spec/unit ")
+          expect(cmd.scan("spec/unit").count).to eq(1)
+        end
+      end
+    end
+
+    describe "same string as both option value and location" do
+      let(:original_cli_args) { %w[ spec/unit --default-path spec/unit --seed 1234 --bisect ] }
+
+      describe "#command_for" do
+        it "removes the location but keeps the option value" do
+          cmd = shell_command.command_for(%w[ spec/unit/foo_spec.rb[1:1] ], server)
+          expect(cmd).to include("--default-path spec/unit")
+          expect(cmd).to include("--seed 1234")
+          expect(cmd.scan("spec/unit").count).to eq(1)
+        end
+      end
+
+      describe "#repro_command_from" do
+        it "keeps the option value but removes the location" do
+          cmd = shell_command.repro_command_from(%w[ ./spec/unit/foo_spec.rb[1:1] ])
+          expect(cmd).to include("--default-path spec/unit")
+          expect(cmd).to include("--seed 1234")
+          expect(cmd).not_to match(/(?<!--)spec\/unit\s/)
+        end
+      end
+    end
+
+    describe "short option with value matching a location" do
+      let(:original_cli_args) { %w[ spec/unit -r spec/unit --bisect ] }
+
+      describe "#command_for" do
+        it "keeps the -r value but removes the location" do
+          cmd = shell_command.command_for(%w[ spec/unit/foo_spec.rb[1:1] ], server)
+          expect(cmd).to include("-r spec/unit")
+          expect(cmd.scan("spec/unit").count).to eq(1)
+        end
+      end
+    end
+
     describe "#bisect_environment_hash" do
       let(:original_cli_args) { %w[] }
 
