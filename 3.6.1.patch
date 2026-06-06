@@ -1,0 +1,118 @@
+diff --git a/lib/rspec/core/bisect/shell_command.rb b/lib/rspec/core/bisect/shell_command.rb
+index b68f8b16..7f04c786 100644
+--- a/lib/rspec/core/bisect/shell_command.rb
++++ b/lib/rspec/core/bisect/shell_command.rb
+@@ -98,8 +98,27 @@ module RSpec
+ 
+         def original_cli_args_without_locations
+           @original_cli_args_without_locations ||= begin
+-            files_or_dirs = parsed_original_cli_options.fetch(:files_or_directories_to_run)
+-            @original_cli_args - files_or_dirs
++            location_indexes = parsed_original_cli_location_indexes.dup
++
++            @original_cli_args.each_with_index.each_with_object([]) do |(arg, index), remaining_args|
++              if location_indexes.first == index
++                location_indexes.shift
++              else
++                remaining_args << arg
++              end
++            end
++          end
++        end
++
++        def parsed_original_cli_location_indexes
++          @parsed_original_cli_location_indexes ||= Parser.parse(indexed_original_cli_args).
++            fetch(:files_or_directories_to_run).
++            map(&:original_index)
++        end
++
++        def indexed_original_cli_args
++          @indexed_original_cli_args ||= @original_cli_args.each_with_index.map do |arg, index|
++            IndexedArgument.new(arg, index)
+           end
+         end
+ 
+@@ -107,6 +126,15 @@ module RSpec
+           @parsed_original_cli_options ||= Parser.parse(@original_cli_args)
+         end
+ 
++        class IndexedArgument < String
++          attr_reader :original_index
++
++          def initialize(value, original_index)
++            super(value)
++            @original_index = original_index
++          end
++        end
++
+         def load_path
+           @load_path ||= "-I#{$LOAD_PATH.map { |p| open3_safe_escape(p) }.join(':')}"
+         end
+diff --git a/spec/rspec/core/bisect/shell_command_spec.rb b/spec/rspec/core/bisect/shell_command_spec.rb
+index b3a0c7be..c7c5bf2b 100644
+--- a/spec/rspec/core/bisect/shell_command_spec.rb
++++ b/spec/rspec/core/bisect/shell_command_spec.rb
+@@ -28,6 +28,31 @@ module RSpec::Core
+         expect(cmd).to match(%r{'?spec/1\.rb'? '?spec/2\.rb'?}).and exclude("spec/unit")
+       end
+ 
++      context 'when option values match original locations' do
++        let(:original_cli_args) { %w[ spec/unit --default-path spec/unit ] }
++
++        it 'keeps the option value while replacing only the original location arg' do
++          cmd = command_for(%w[ spec/1.rb ])
++
++          expect(cmd).to include("--default-path spec/unit")
++          expect(cmd.scan("spec/unit").count).to eq(1)
++          expect(cmd).to match(%r{'?spec/1\.rb'?})
++        end
++      end
++
++      context 'when the same string appears as duplicate locations and option values' do
++        let(:original_cli_args) { %w[ spec/unit spec/unit --default-path spec/unit --example spec/unit ] }
++
++        it 'removes only the positional location args' do
++          cmd = command_for(%w[ spec/1.rb ])
++
++          expect(cmd).to include("--default-path spec/unit")
++          expect(cmd).to include("--example spec/unit")
++          expect(cmd.scan("spec/unit").count).to eq(2)
++          expect(cmd).to match(%r{'?spec/1\.rb'?})
++        end
++      end
++
+       it 'escapes locations' do
+         cmd = command_for(["path/with spaces/to/spec.rb"])
+         if uses_quoting_for_escaping?
+@@ -154,6 +179,31 @@ module RSpec::Core
+         expect(cmd).to include("--seed 1234").and exclude("spec/unit ")
+       end
+ 
++      context 'when option values match original locations' do
++        let(:original_cli_args) { %w[ spec/unit --default-path spec/unit --seed 1234 ] }
++
++        it 'keeps the option pair while excluding the original location' do
++          cmd = repro_command_from(%w[ ./spec/other_spec.rb[1:1] ])
++
++          expect(cmd).to include("--default-path spec/unit")
++          expect(cmd).to include("--seed 1234")
++          expect(cmd.scan("spec/unit").count).to eq(1)
++        end
++      end
++
++      context 'when the same string appears as duplicate locations and option values' do
++        let(:original_cli_args) { %w[ spec/unit spec/unit --default-path spec/unit --example spec/unit --seed 1234 ] }
++
++        it 'removes only the positional location args' do
++          cmd = repro_command_from(%w[ ./spec/other_spec.rb[1:1] ])
++
++          expect(cmd).to include("--default-path spec/unit")
++          expect(cmd).to include("--example spec/unit")
++          expect(cmd).to include("--seed 1234")
++          expect(cmd.scan("spec/unit").count).to eq(2)
++        end
++      end
++
+       it 'includes the original SPEC_OPTS but excludes the --bisect flag' do
+         with_env_vars('SPEC_OPTS' => '--bisect --seed 1234') do
+           cmd = repro_command_from(%w[ ./spec/unit/1_spec.rb[1:1] ])

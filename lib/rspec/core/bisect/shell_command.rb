@@ -98,13 +98,41 @@ module RSpec
 
         def original_cli_args_without_locations
           @original_cli_args_without_locations ||= begin
-            files_or_dirs = parsed_original_cli_options.fetch(:files_or_directories_to_run)
-            @original_cli_args - files_or_dirs
+            location_indexes = parsed_original_cli_location_indexes.dup
+
+            @original_cli_args.each_with_index.each_with_object([]) do |(arg, index), remaining_args|
+              if location_indexes.first == index
+                location_indexes.shift
+              else
+                remaining_args << arg
+              end
+            end
+          end
+        end
+
+        def parsed_original_cli_location_indexes
+          @parsed_original_cli_location_indexes ||= Parser.parse(indexed_original_cli_args).
+            fetch(:files_or_directories_to_run).
+            map(&:original_index)
+        end
+
+        def indexed_original_cli_args
+          @indexed_original_cli_args ||= @original_cli_args.each_with_index.map do |arg, index|
+            IndexedArgument.new(arg, index)
           end
         end
 
         def parsed_original_cli_options
           @parsed_original_cli_options ||= Parser.parse(@original_cli_args)
+        end
+
+        class IndexedArgument < String
+          attr_reader :original_index
+
+          def initialize(value, original_index)
+            super(value)
+            @original_index = original_index
+          end
         end
 
         def load_path

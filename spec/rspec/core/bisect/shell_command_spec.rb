@@ -28,6 +28,31 @@ module RSpec::Core
         expect(cmd).to match(%r{'?spec/1\.rb'? '?spec/2\.rb'?}).and exclude("spec/unit")
       end
 
+      context 'when option values match original locations' do
+        let(:original_cli_args) { %w[ spec/unit --default-path spec/unit ] }
+
+        it 'keeps the option value while replacing only the original location arg' do
+          cmd = command_for(%w[ spec/1.rb ])
+
+          expect(cmd).to include("--default-path spec/unit")
+          expect(cmd.scan("spec/unit").count).to eq(1)
+          expect(cmd).to match(%r{'?spec/1\.rb'?})
+        end
+      end
+
+      context 'when the same string appears as duplicate locations and option values' do
+        let(:original_cli_args) { %w[ spec/unit spec/unit --default-path spec/unit --example spec/unit ] }
+
+        it 'removes only the positional location args' do
+          cmd = command_for(%w[ spec/1.rb ])
+
+          expect(cmd).to include("--default-path spec/unit")
+          expect(cmd).to include("--example spec/unit")
+          expect(cmd.scan("spec/unit").count).to eq(2)
+          expect(cmd).to match(%r{'?spec/1\.rb'?})
+        end
+      end
+
       it 'escapes locations' do
         cmd = command_for(["path/with spaces/to/spec.rb"])
         if uses_quoting_for_escaping?
@@ -152,6 +177,31 @@ module RSpec::Core
       it 'includes the original CLI args but excludes the original CLI locations' do
         cmd = repro_command_from(%w[ ./spec/unit/1_spec.rb[1:1] ./spec/unit/2_spec.rb[1:1] ])
         expect(cmd).to include("--seed 1234").and exclude("spec/unit ")
+      end
+
+      context 'when option values match original locations' do
+        let(:original_cli_args) { %w[ spec/unit --default-path spec/unit --seed 1234 ] }
+
+        it 'keeps the option pair while excluding the original location' do
+          cmd = repro_command_from(%w[ ./spec/other_spec.rb[1:1] ])
+
+          expect(cmd).to include("--default-path spec/unit")
+          expect(cmd).to include("--seed 1234")
+          expect(cmd.scan("spec/unit").count).to eq(1)
+        end
+      end
+
+      context 'when the same string appears as duplicate locations and option values' do
+        let(:original_cli_args) { %w[ spec/unit spec/unit --default-path spec/unit --example spec/unit --seed 1234 ] }
+
+        it 'removes only the positional location args' do
+          cmd = repro_command_from(%w[ ./spec/other_spec.rb[1:1] ])
+
+          expect(cmd).to include("--default-path spec/unit")
+          expect(cmd).to include("--example spec/unit")
+          expect(cmd).to include("--seed 1234")
+          expect(cmd.scan("spec/unit").count).to eq(2)
+        end
       end
 
       it 'includes the original SPEC_OPTS but excludes the --bisect flag' do
