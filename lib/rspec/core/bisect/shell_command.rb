@@ -99,12 +99,19 @@ module RSpec
         def original_cli_args_without_locations
           @original_cli_args_without_locations ||= begin
             files_or_dirs = parsed_original_cli_options.fetch(:files_or_directories_to_run)
-            @original_cli_args - files_or_dirs
+            location_ids = files_or_dirs.map(&:object_id)
+
+            @original_cli_args.reject.with_index do |_arg, index|
+              location_ids.include?(@tracked_original_cli_args[index].object_id)
+            end
           end
         end
 
         def parsed_original_cli_options
-          @parsed_original_cli_options ||= Parser.parse(@original_cli_args)
+          @parsed_original_cli_options ||= begin
+            @tracked_original_cli_args = @original_cli_args.map(&:dup)
+            Parser.parse(@tracked_original_cli_args)
+          end
         end
 
         def load_path

@@ -28,6 +28,14 @@ module RSpec::Core
         expect(cmd).to match(%r{'?spec/1\.rb'? '?spec/2\.rb'?}).and exclude("spec/unit")
       end
 
+      it 'does not mistakenly remove option values that match location names' do
+        original_cli_args.replace %w[ spec/unit --default-path spec/unit ]
+        cmd = command_for(%w[ spec/1.rb ])
+        expect(cmd).to match(%r{'?spec/1\.rb'?})
+        expect(cmd).to include("--default-path spec/unit")
+        expect(cmd.scan("spec/unit").count).to eq(1) # Only the one from --default-path should remain
+      end
+
       it 'escapes locations' do
         cmd = command_for(["path/with spaces/to/spec.rb"])
         if uses_quoting_for_escaping?
@@ -192,6 +200,20 @@ module RSpec::Core
       it 'does not include `--bisect` even though the original args do' do
         original_cli_args << "--bisect"
         expect(repro_command_from(%w[ ./foo.rb[1:1] ])).to exclude("bisect")
+      end
+
+      it 'does not mistakenly remove option values that match location names' do
+        original_cli_args.replace %w[ spec/unit --default-path spec/unit ]
+        cmd = repro_command_from(%w[ ./spec/unit/1_spec.rb[1:1] ])
+        expect(cmd).to include("--default-path spec/unit")
+        expect(cmd).to match(%r{rspec \./spec/unit/1_spec\.rb\[1:1\] --default-path spec/unit})
+      end
+
+      it 'handles multiple identical location parameters without removing matching option values' do
+        original_cli_args.replace %w[ spec/unit spec/unit --default-path spec/unit ]
+        cmd = repro_command_from(%w[ ./spec/unit/1_spec.rb[1:1] ])
+        expect(cmd).to include("--default-path spec/unit")
+        expect(cmd).to match(%r{rspec \./spec/unit/1_spec\.rb\[1:1\] --default-path spec/unit})
       end
 
       it 'quotes the ids on a shell like ZSH that requires it' do

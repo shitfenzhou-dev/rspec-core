@@ -1,0 +1,66 @@
+diff --git a/lib/rspec/core/bisect/shell_command.rb b/lib/rspec/core/bisect/shell_command.rb
+index b68f8b16..4c037892 100644
+--- a/lib/rspec/core/bisect/shell_command.rb
++++ b/lib/rspec/core/bisect/shell_command.rb
+@@ -99,12 +99,19 @@ module RSpec
+         def original_cli_args_without_locations
+           @original_cli_args_without_locations ||= begin
+             files_or_dirs = parsed_original_cli_options.fetch(:files_or_directories_to_run)
+-            @original_cli_args - files_or_dirs
++            location_ids = files_or_dirs.map(&:object_id)
++
++            @original_cli_args.reject.with_index do |_arg, index|
++              location_ids.include?(@tracked_original_cli_args[index].object_id)
++            end
+           end
+         end
+ 
+         def parsed_original_cli_options
+-          @parsed_original_cli_options ||= Parser.parse(@original_cli_args)
++          @parsed_original_cli_options ||= begin
++            @tracked_original_cli_args = @original_cli_args.map(&:dup)
++            Parser.parse(@tracked_original_cli_args)
++          end
+         end
+ 
+         def load_path
+diff --git a/spec/rspec/core/bisect/shell_command_spec.rb b/spec/rspec/core/bisect/shell_command_spec.rb
+index b3a0c7be..e654ee06 100644
+--- a/spec/rspec/core/bisect/shell_command_spec.rb
++++ b/spec/rspec/core/bisect/shell_command_spec.rb
+@@ -28,6 +28,14 @@ module RSpec::Core
+         expect(cmd).to match(%r{'?spec/1\.rb'? '?spec/2\.rb'?}).and exclude("spec/unit")
+       end
+ 
++      it 'does not mistakenly remove option values that match location names' do
++        original_cli_args.replace %w[ spec/unit --default-path spec/unit ]
++        cmd = command_for(%w[ spec/1.rb ])
++        expect(cmd).to match(%r{'?spec/1\.rb'?})
++        expect(cmd).to include("--default-path spec/unit")
++        expect(cmd.scan("spec/unit").count).to eq(1) # Only the one from --default-path should remain
++      end
++
+       it 'escapes locations' do
+         cmd = command_for(["path/with spaces/to/spec.rb"])
+         if uses_quoting_for_escaping?
+@@ -194,6 +202,20 @@ module RSpec::Core
+         expect(repro_command_from(%w[ ./foo.rb[1:1] ])).to exclude("bisect")
+       end
+ 
++      it 'does not mistakenly remove option values that match location names' do
++        original_cli_args.replace %w[ spec/unit --default-path spec/unit ]
++        cmd = repro_command_from(%w[ ./spec/unit/1_spec.rb[1:1] ])
++        expect(cmd).to include("--default-path spec/unit")
++        expect(cmd).to match(%r{rspec \./spec/unit/1_spec\.rb\[1:1\] --default-path spec/unit})
++      end
++
++      it 'handles multiple identical location parameters without removing matching option values' do
++        original_cli_args.replace %w[ spec/unit spec/unit --default-path spec/unit ]
++        cmd = repro_command_from(%w[ ./spec/unit/1_spec.rb[1:1] ])
++        expect(cmd).to include("--default-path spec/unit")
++        expect(cmd).to match(%r{rspec \./spec/unit/1_spec\.rb\[1:1\] --default-path spec/unit})
++      end
++
+       it 'quotes the ids on a shell like ZSH that requires it' do
+         with_env_vars 'SHELL' => '/usr/local/bin/zsh' do
+           expect(repro_command_from(%w[ ./foo.rb[1:1] ])).to include("'./foo.rb[1:1]'")
